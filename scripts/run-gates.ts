@@ -131,17 +131,21 @@ export function defaultConcurrency(
   selectedMode: Mode,
   total: number,
   available = availableParallelism(),
+  platform: NodeJS.Platform = process.platform,
 ): ConcurrencyDefault {
   if (selectedMode === 'ci-consumers') return { workers: total, source: 'ci-consumers gate count' }
   // Local modes cap workers: several doc gates each build a full ts.Program,
   // so an uncapped default on a large host trades wall clock for memory blowups.
   const localCap = selectedMode === 'check-all' || selectedMode === 'doc-sync'
-  const modeLimit = localCap ? Math.min(4, available) : available
+  const windowsCheckAll = selectedMode === 'check-all' && platform === 'win32'
+  const modeLimit = windowsCheckAll ? 1 : localCap ? Math.min(4, available) : available
   return {
     workers: Math.min(total, modeLimit),
-    source: localCap
-      ? `${available} available CPU(s), ${selectedMode} cap 4`
-      : `${available} available CPU(s)`,
+    source: windowsCheckAll
+      ? 'Windows check-all process-isolation cap 1'
+      : localCap
+        ? `${available} available CPU(s), ${selectedMode} cap 4`
+        : `${available} available CPU(s)`,
   }
 }
 

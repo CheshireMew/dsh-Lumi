@@ -79,6 +79,8 @@ interface SdkScenario {
   expectedToolDescriptions?: Readonly<Record<string, string>>
   /** Expected runtime-context state in the real assembled request. */
   runtimeContext?: false | { includes: readonly string[]; excludes: readonly string[] }
+  /** Skip a composition whose persistent POSIX terminal is unsupported on Windows. */
+  posixOnly?: boolean
 }
 
 const SCENARIOS: SdkScenario[] = [
@@ -112,6 +114,7 @@ const SCENARIOS: SdkScenario[] = [
     expectedSystem: MINIMAL_SYSTEM_PROMPT,
     expectedToolDescriptions: { bash: MINIMAL_BASH_DESCRIPTION },
     runtimeContext: false,
+    posixOnly: true,
   },
 ]
 
@@ -207,12 +210,37 @@ function contextOfContents(contents: readonly string[]): NormalizeContext {
   }
 }
 
+/** Replace portable cwd tokens without corrupting JSON text nested in string fields. */
+function realizeFixtureValue(value: unknown, cwd: string): unknown {
+  if (typeof value === 'string') {
+    if (!value.includes('{{cwd}}')) return value
+    try {
+      return JSON.stringify(realizeFixtureValue(JSON.parse(value) as unknown, cwd))
+    } catch {
+      return value.replaceAll('{{cwd}}', cwd)
+    }
+  }
+  if (Array.isArray(value)) return value.map(item => realizeFixtureValue(item, cwd))
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, realizeFixtureValue(item, cwd)]))
+  }
+  return value
+}
+
+/** Realize every JSONL record and retain the fixture's final newline. */
+function realizeFixtureCwd(content: string, cwd: string): string {
+  const trailingNewline = content.endsWith('\n') ? '\n' : ''
+  return content.trimEnd().split('\n')
+    .map(line => JSON.stringify(realizeFixtureValue(JSON.parse(line) as unknown, cwd)))
+    .join('\n') + trailingNewline
+}
+
 async function hydrateReplayFixtures(scenario: SdkScenario, cwd: string): Promise<string[]> {
   const root = join(cwd, '.replay-fixtures')
   await mkdir(root, { recursive: true })
   return Promise.all(fixtureFiles(scenario).map(async (source) => {
     const destination = join(root, basename(source))
-    await writeFile(destination, (await readFile(source, 'utf8')).replaceAll('{{cwd}}', cwd))
+    await writeFile(destination, realizeFixtureCwd(await readFile(source, 'utf8'), cwd))
     return destination
   }))
 }
@@ -345,7 +373,7 @@ function fixtureFiles(scenario: SdkScenario): string[] {
 
 describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
   for (const scenario of SCENARIOS) {
-    it(`replays ${scenario.name} through the SDK`, async () => {
+    it.skipIf(scenario.posixOnly === true && process.platform === 'win32')(`replays ${scenario.name} through the SDK`, async () => {
       const scenarioDir = join(snapshotsDir, scenario.name)
       const notificationsExpectedPath = join(scenarioDir, 'notifications.expected.jsonl')
       const resultExpectedPath = join(scenarioDir, 'result.expected.json')

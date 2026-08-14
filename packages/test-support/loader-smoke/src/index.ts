@@ -11,9 +11,11 @@
  * @module @deepseek-ai/dsh-loader-smoke
  */
 
+import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { execa } from 'execa'
 
 export {
@@ -23,6 +25,30 @@ export {
 } from './agent-turn.ts'
 
 const DEFAULT_PROCESS_TIMEOUT_MS = 30_000
+
+/* v8 ignore start -- exercised by the Windows snapshot gate, not Linux coverage. */
+/** Locate the Git for Windows Bash directory used by POSIX-recorded example fixtures. */
+function windowsGitBashBin(): string {
+  const fromPath = (process.env.PATH ?? '')
+    .split(delimiter)
+    .filter(Boolean)
+    .map(entry => join(entry, 'bash.exe'))
+  let fromGit: string[] = []
+  try {
+    fromGit = execFileSync('where.exe', ['git'], { encoding: 'utf8' })
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map(git => join(dirname(dirname(git)), 'bin', 'bash.exe'))
+  } catch {
+    // The explicit failure below owns both a missing locator and a missing Git installation.
+  }
+  const bash = [...fromPath, ...fromGit].find(existsSync)
+  if (bash === undefined) {
+    throw new Error('Windows POSIX example replay requires Git for Windows bash beside the active git executable')
+  }
+  return dirname(bash)
+}
+/* v8 ignore stop */
 
 /** Vitest deadline that leaves room for the subprocess-owned 30-second diagnostic timeout. */
 export const LOADER_SMOKE_TEST_TIMEOUT_MS = DEFAULT_PROCESS_TIMEOUT_MS + 15_000
@@ -108,6 +134,10 @@ export function resolveExampleLaunch(options: ExampleLaunchOptions): ExampleLaun
   const mode = options.mode ?? resolveExampleMode()
   const configArgs = options.configArgs ?? []
   const env: NodeJS.ProcessEnv = { ...options.env }
+  /* v8 ignore next -- exercised by the Windows snapshot gate, not Linux coverage. */
+  if (process.platform === 'win32') {
+    env.PATH = [windowsGitBashBin(), options.env?.PATH ?? process.env.PATH ?? ''].filter(Boolean).join(delimiter)
+  }
 
   if (mode === 'src') {
     if (options.tsconfigPath === undefined) {

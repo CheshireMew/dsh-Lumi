@@ -11,7 +11,7 @@
 // Geometry is the point of the scenario. The command is unbounded model text,
 // and an uncapped card grows with it until the refuse/allow buttons leave the
 // viewport — an approval the user could see and not answer.
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import type { Browser, Page } from 'playwright'
@@ -25,7 +25,8 @@ import {
   assertFixtureInventory, captureStableAria, compareOrRefreshGolden, fixtureUserPrompts,
   launchWebScaffold, recordFixture, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
-import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './support.ts'
+import { recordedApprovalCommand, windowsApprovalReplay } from './approval-composer.support.ts'
+import { connectFreshWorkspace, newEnglishPage, REPO_ROOT, saveFailureShot } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('./snapshots/approval-composer', import.meta.url))
 const FIXTURE = join(SNAPSHOT_DIR, 'session.jsonl')
@@ -54,7 +55,23 @@ describe('web e2e: approval takeover keeps its actions reachable', () => {
   const sessionEvents: SessionEvent[] = []
 
   beforeAll(async () => {
-    scaffold = await launchWebScaffold(MODE === 'record' ? {} : { replayFixture: FIXTURE, paceMs: 15 })
+    let replayOverride: string | undefined
+    if (MODE !== 'record' && process.platform === 'win32') {
+      const artifactDir = join(REPO_ROOT, '.artifacts')
+      replayOverride = join(artifactDir, 'approval-composer.win32.override.json')
+      await mkdir(artifactDir, { recursive: true })
+      await writeFile(replayOverride, `${JSON.stringify(windowsApprovalReplay(FIXTURE, TOKENS), null, 2)}\n`)
+    }
+    scaffold = await launchWebScaffold({
+      nativeWindowsShell: true,
+      ...MODE === 'record'
+        ? {}
+        : {
+          replayFixture: FIXTURE,
+          paceMs: 15,
+          ...(replayOverride === undefined ? {} : { replayOverride }),
+        },
+    })
     scaffold.ctx.on('session/event', (_session, event: SessionEvent) => { sessionEvents.push(event) })
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
@@ -112,7 +129,13 @@ describe('web e2e: approval takeover keeps its actions reachable', () => {
     if (MODE !== 'record') {
       // This golden owns the stable waiting surface; the answered golden below
       // owns the resulting transcript.
-      const snapshot = await captureStableAria(page, '[data-approval-key]', scaffold.workspaceCwd)
+      const rawSnapshot = await captureStableAria(page, '[data-approval-key]', scaffold.workspaceCwd)
+      // The shipped standard preset exposes bash on POSIX and pwsh on Windows.
+      // Keep one golden for the same approval semantics by canonicalizing only
+      // the platform dialect of this fixed long command.
+      const snapshot = rawSnapshot.split(
+        `Set-Content -LiteralPath notes.txt -Value '${TOKENS}' -NoNewline`,
+      ).join(recordedApprovalCommand(FIXTURE))
       await compareOrRefreshGolden(UI_EXPECTED, snapshot, MODE)
 
       // The uncapped-card hazard the header names, measured at the lane

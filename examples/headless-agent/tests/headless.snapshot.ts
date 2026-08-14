@@ -55,7 +55,11 @@ const tsconfigPath = fileURLToPath(new URL('../../../tsconfig.json', import.meta
 const reasoningConfigPath = fileURLToPath(new URL('./fixtures/cli.cordis.yml', import.meta.url))
 const deepseekDefaultsConfigPath = fileURLToPath(new URL('./fixtures/deepseek-defaults.cordis.yml', import.meta.url))
 const headlessOverlayPath = fileURLToPath(new URL('./fixtures/headless-profile.cordis.yml', import.meta.url))
-const headlessSessionExpected = join(snapshotsDir, 'headless-profile', 'session.expected.jsonl')
+const headlessSessionExpected = join(
+  snapshotsDir,
+  'headless-profile',
+  process.platform === 'win32' ? 'session.windows.expected.jsonl' : 'session.expected.jsonl',
+)
 const headlessFailureExpected = join(snapshotsDir, 'headless-profile', 'stderr.expected.txt')
 const cliMockLlmPluginPath = fileURLToPath(new URL('./fixtures/cli-mock-llm.ts', import.meta.url))
 const refreshing = process.env.DSH_SNAPSHOT === 'refresh'

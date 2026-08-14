@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
+  "remote": "upstream",
+  "branch": "master",
+  "validatedCommit": "47f943859bef60e4160492346772ded9b24f765a",
+  "highConflictFiles": [
+    "packages/boot/app-boot/src/index.ts",
+    "packages/client/ui-layout/src/client/index.ts",
+    "packages/client/ui-layout/src/client/LayoutRoot.tsx",
+    "vendor/loader/src/index.ts",
+    "vendor/loader/src/config/tree.ts",
+    "vendor/hmr/src/index.ts",
+    "pnpm-lock.yaml"
+  ]
+}

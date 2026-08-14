@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 /**
- * AppFrame interaction spec under the four-share props form: real layout
+ * AppFrame interaction spec under the frame-owner props form: a real layout
  * store instance (createLayoutStore().create() — the test-sanctioned engine
- * path), a recording renderSlot stub, and a render-prop SessionProvider stub
- * (the real one is framework-wired to the renderer host; its own behavior is
- * web-react's spec territory). Drag sequences (pointer capture + rAF flush),
+ * path) feeds a subscribing harness and recording delegated render callbacks.
+ * Drag sequences (pointer capture + rAF flush),
  * concession response to viewport change, and details staying mounted at
  * zero width are the preserved behavior assertions. jsdom has no layout
  * engine, so the frame width comes from a mocked getBoundingClientRect and
@@ -17,23 +16,7 @@ import { AppFrame } from '@deepseek-ai/dsh-client-ui-layout/src/client/AppFrame.
 import type { AppFrameProps } from '@deepseek-ai/dsh-client-ui-layout/src/client/AppFrame.tsx'
 import { SIDEBAR_COLLAPSED } from '@deepseek-ai/dsh-client-ui-layout/src/client/columns.ts'
 import { createLayoutStore } from '@deepseek-ai/dsh-client-ui-layout/src/client/stores.ts'
-import type {
-  SessionId, SessionListState, WorkspaceListState,
-} from '@deepseek-ai/dsh-client-runtime/client'
-
-// Session selection controls for the SessionProvider and useSessions stubs.
-const selectedSession = { current: 's-test' as SessionId | undefined }
-const selectedSessionBlank = { current: false }
-const baselinesReady = { current: true }
-
-// Render-prop contract stub fed through the standard seat prop (the renderer
-// injects the real one in production): session mode runs children(id), empty
-// mode runs the empty branch — the frame must work against exactly this
-// shape. Typed as the seat's own component type so the branded sessionId
-// parameter stays contract-checked.
-const SessionProviderStub: AppFrameProps['SessionProvider'] = ({ children, empty }) =>
-  selectedSession.current === undefined ? <>{empty?.() ?? null}</> : <>{children(selectedSession.current)}</>
-
+const detailsAvailable = { current: true }
 
 /** Observer stub: captures the callback so tests can fire resizes manually. */
 let fireResize: (() => void) | null = null
@@ -56,40 +39,27 @@ function mountFrame() {
   window.innerWidth = frameWidth // first-render viewport source before the observer fires
   const instance = createLayoutStore().create()
   const slotCalls: { key: string; props: unknown }[] = []
-  const renderSlot = ((key: string, owner: object) => {
+  const renderDelegated = (key: string, owner: object = {}) => {
     slotCalls.push({ key, props: owner })
     if (key === 'sidebar') return <div data-testid="sidebar-content" />
     if (key === 'conversation') return <div data-testid="center-content" />
     if (key === 'details') return <div data-testid="details-content" />
-    if (key === 'conversation.empty') return <div data-testid="empty-content" />
     return <div data-testid="other-content" />
-  }) as AppFrameProps['renderSlot']
-  const useSessions = ((sel: (s: SessionListState) => unknown) => {
-    const current = selectedSession.current
-    const sessionState = {
-      ids: current === undefined ? [] : [current],
-      byId: current === undefined
-        ? {}
-        : { [current]: { id: current, displayTitle: 'Test', running: false, blank: selectedSessionBlank.current, updatedAt: 1 } },
-      current,
-      phase: 'ready',
-    } as SessionListState
-    return sel(sessionState)
-  }) as never
-  const workspaceState: WorkspaceListState = {
-    items: [], archivedSessionIds: [], state: 'idle', phase: 'ready', error: null,
-    baselinesReady: baselinesReady.current, recentWorkspaceId: undefined,
   }
-  const element = () => (
-    <AppFrame
-      useStore={hookOf(instance)}
-      actions={instance.actions}
-      renderSlot={renderSlot}
-      useSessions={useSessions}
-      useWorkspaces={((sel: (s: WorkspaceListState) => unknown) => sel(workspaceState)) as never}
-      SessionProvider={SessionProviderStub}
-    />
-  )
+  function FrameHarness() {
+    const panels = hookOf(instance)(s => s)
+    const props = {
+      panels,
+      actions: instance.actions,
+      detailsAvailable: detailsAvailable.current,
+      renderSidebar: (owner: { collapsed: boolean; width: number }) => renderDelegated('sidebar', owner),
+      renderConversation: () => renderDelegated('conversation'),
+      renderDetails: () => renderDelegated('details'),
+      renderOverlay: () => renderDelegated('shell.overlay'),
+    } as AppFrameProps
+    return <AppFrame {...props} />
+  }
+  const element = () => <FrameHarness />
   const utils = render(element())
   const frame = utils.container.firstElementChild as HTMLElement
   return { instance, frame, slotCalls, rerenderFrame: () => { utils.rerender(element()) }, ...utils }
@@ -112,9 +82,7 @@ function drag(handle: Element, fromX: number, toX: number): void {
 
 beforeEach(() => {
   frameWidth = 1920
-  selectedSession.current = 's-test' as SessionId
-  selectedSessionBlank.current = false
-  baselinesReady.current = true
+  detailsAvailable.current = true
   vi.useFakeTimers()
   vi.stubGlobal('ResizeObserver', ResizeObserverStub)
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => { cb(0) }, 16) as unknown as number)
@@ -137,81 +105,41 @@ afterEach(() => {
 })
 
 describe('AppFrame', () => {
+  it('keeps the official frame DOM snapshot when no replacement is loaded', () => {
+    const { frame } = mountFrame()
+    const normalized = frame.outerHTML.replace(/class="[^"]+"/gu, 'class')
+    expect(normalized).toMatchInlineSnapshot('"<div class style=\"grid-template-columns: 280px minmax(0, 1fr) 0px;\" data-details-collapsed=\"true\"><div class><div data-testid=\"sidebar-content\"></div></div><div class><div data-testid=\"center-content\"></div></div><div class><div data-testid=\"details-content\"></div></div><div class data-shell-overlay=\"true\"><div data-testid=\"other-content\"></div></div><div class style=\"left: 280px;\" data-side=\"sidebar\"></div></div>"')
+  })
+
   it('renders three tracks from store state', () => {
     const { frame } = mountFrame()
     expect(tracks(frame)).toEqual([280, 0])
   })
 
-  it('renders the session pair with empty owner shares (sessionId is framework-standard)', () => {
+  it('renders the official seats through delegated callbacks', () => {
     const { slotCalls, getByTestId } = mountFrame()
     expect(getByTestId('center-content')).toBeTruthy()
     expect(getByTestId('details-content')).toBeTruthy()
     const keys = slotCalls.map(c => c.key)
     expect(keys).toContain('conversation')
     expect(keys).toContain('details')
-    expect(keys).not.toContain('conversation.empty')
     expect(slotCalls.find(c => c.key === 'conversation')!.props).toEqual({})
     expect(slotCalls.find(c => c.key === 'details')!.props).toEqual({})
   })
 
-  it('keeps the conversation slot mounted while no session is current', () => {
-    // No current session: the session-maybe conversation shell owns the New
-    // Session view itself — the center column renders it unconditionally.
-    selectedSession.current = undefined
-    const { slotCalls, getByTestId } = mountFrame()
-    expect(getByTestId('center-content')).toBeTruthy()
-    expect(slotCalls.map(c => c.key)).toContain('conversation')
-  })
-
-  it('renders both column occupants before baselines settle (no loading gate)', () => {
-    // No loading gate: a bare loading status reads worse than the shell's own
-    // pending rendering — both occupants mount from first paint.
-    baselinesReady.current = false
-    const { slotCalls } = mountFrame()
-    expect(slotCalls.map(c => c.key)).toContain('conversation')
-    expect(slotCalls.map(c => c.key)).toContain('details')
-  })
-
-  it('ignores unselected states and closes only when the Session id changes', () => {
+  it('hides unavailable details without erasing the stored width preference', () => {
     const { frame, instance, rerenderFrame } = mountFrame()
     expect(tracks(frame)).toEqual([280, 0])
 
     act(() => { instance.actions.openDetails() })
     expect(tracks(frame)).toEqual([280, 360])
-
-    selectedSession.current = 's-next' as SessionId
-    act(() => { rerenderFrame() })
-    expect(tracks(frame)).toEqual([280, 0])
-
-    act(() => { instance.actions.openDetails() })
-    selectedSession.current = 's-blank' as SessionId
-    selectedSessionBlank.current = true
+    detailsAvailable.current = false
     act(() => { rerenderFrame() })
     expect(tracks(frame)).toEqual([280, 0])
     expect(instance.getSnapshot().details).toBe(360)
-
-    selectedSession.current = 's-next' as SessionId
-    selectedSessionBlank.current = false
+    detailsAvailable.current = true
     act(() => { rerenderFrame() })
     expect(tracks(frame)).toEqual([280, 360])
-
-    selectedSession.current = undefined
-    act(() => { rerenderFrame() })
-    expect(tracks(frame)).toEqual([280, 0])
-    selectedSession.current = 's-test' as SessionId
-    act(() => { rerenderFrame() })
-    expect(tracks(frame)).toEqual([280, 0])
-  })
-
-  it('keeps details closed when the first Session materializes', () => {
-    selectedSession.current = undefined
-    const { frame, instance, rerenderFrame } = mountFrame()
-    expect(tracks(frame)).toEqual([280, 0])
-    expect(instance.getSnapshot().details).toBe(0)
-
-    selectedSession.current = 's-first' as SessionId
-    act(() => { rerenderFrame() })
-    expect(tracks(frame)).toEqual([280, 0])
   })
 
   it('sidebar slot receives live concession output as owner props', () => {

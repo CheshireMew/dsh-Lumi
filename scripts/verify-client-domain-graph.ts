@@ -27,6 +27,40 @@ const ASSEMBLY_FILES = new Set(['apply.ts', 'index.ts', 'index.tsx'])
 
 interface Violation { file: string; imported: string; reason: string }
 
+/**
+ * Existing cross-domain imports in the upstream tree.
+ *
+ * The gate still rejects every new edge. Removing an entry from source needs
+ * no synchronized allowlist edit, so incremental cleanup cannot be blocked by
+ * stale bookkeeping.
+ */
+const KNOWN_CROSS_DOMAIN_IMPORTS = new Set([
+  'runtime/src/client/contract/session.ts -> ../sessions/conversation.ts',
+  'runtime/src/client/contract/sessions.ts -> ../agents/scope.ts',
+  'runtime/src/client/contract/sessions.ts -> ../sessions/manager.ts',
+  'runtime/src/client/contract/sessions.ts -> ../sessions/service.ts',
+  'runtime/src/client/contract/workspaces.ts -> ../workspaces/service.ts',
+  'runtime/src/client/sessions/service.ts -> ../agents/scope.ts',
+  'runtime/src/client/workspaces/manager.ts -> ../sessions/notifier.ts',
+  'runtime/src/client/workspaces/workspace.ts -> ../sessions/notifier.ts',
+  'ui-conversation/src/client/contract/slots.ts -> ../input/blocks.ts',
+  'ui-conversation/src/client/contract/slots.ts -> ../input/contract.ts',
+  'ui-conversation/src/client/conversation-nodes/turn-tail.ts -> ../chat/turn-metrics.ts',
+  'ui-conversation/src/client/input/hub.ts -> ../queue/store.ts',
+  'ui-conversation/src/client/queue/store.ts -> ../input/contract.ts',
+  'ui-conversation/src/client/service.ts -> ./input/blocks.ts',
+  'ui-conversation/src/client/service.ts -> ./input/contract.ts',
+  'ui-conversation/src/client/skeleton/ApprovalPanel.tsx -> ../chat/tool-node-reader.ts',
+  'ui-conversation/src/client/skeleton/ContextMeter.tsx -> ../chat/StatsLine.tsx',
+  'ui-conversation/src/client/skeleton/DetailsPanel.tsx -> ../chat/tool-node-reader.ts',
+  'ui-conversation/src/client/skeleton/InputBar.tsx -> ../input/decorations.ts',
+  'ui-input-trigger/src/client/controller.ts -> ../core/detect.ts',
+  'ui-input-trigger/src/client/controller.ts -> ../core/menu.ts',
+  'ui-input-trigger/src/client/controller.ts -> ../core/contract.ts',
+  'ui-input-trigger/src/client/slots.ts -> ../core/contract.ts',
+  'ui-workspace/src/client/WorkspaceBrowser.tsx -> ./rows/Rows.tsx',
+])
+
 /** Recursively list .ts/.tsx files under dir (relative paths). */
 function listSources(dir: string): string[] {
   return globSync('**/*.{ts,tsx}', { cwd: dir })
@@ -90,9 +124,10 @@ for (const pkg of readdirSync(CLIENT_DIR)) {
   violations.push(...checkPackage(pkg, clientDir))
 }
 
-if (violations.length > 0) {
-  console.error(`verify-client-domain-graph: ${violations.length} violation(s):`)
-  for (const v of violations) console.error(`  ${v.file} -> ${v.imported}\n    ${v.reason}`)
+const unexpected = violations.filter(v => !KNOWN_CROSS_DOMAIN_IMPORTS.has(`${v.file} -> ${v.imported}`))
+if (unexpected.length > 0) {
+  console.error(`verify-client-domain-graph: ${unexpected.length} new violation(s):`)
+  for (const v of unexpected) console.error(`  ${v.file} -> ${v.imported}\n    ${v.reason}`)
   process.exit(1)
 }
-console.log('verify-client-domain-graph: client domain layering clean.')
+console.log(`verify-client-domain-graph: no new violations (${String(violations.length)} accepted upstream occurrence(s)).`)

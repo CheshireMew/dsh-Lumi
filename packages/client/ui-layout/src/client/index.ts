@@ -1,8 +1,10 @@
 /**
- * Layout plugin, browser half: one register() call contributes AppFrame into
- * the runtime's built-in 'root' slot and, in the same breath, declares the
- * four child slots (declaration = exclusive render authority), seats the
- * layout store (panel geometry), and wires the panel-action service face.
+ * Layout plugin, browser half: LayoutRoot occupies the runtime's built-in
+ * `root` slot, declares every child plus the replaceable `layout.frame` seam,
+ * seats the layout store, and retains exclusive child render authority.
+ * AppFrame occupies the frame seam at priority 0; a product shell may register
+ * at a lower priority and unload back to the official frame without replacing
+ * the root, store, or child declarations.
  * ctx.layout is the cross-plugin panel-action contract; navigation state lives
  * with the runtime sessions service. A second effect seats the theme
  * presenter, which projects ctx.theme snapshots onto document.body.
@@ -11,6 +13,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import type { PanelActions } from './service.ts'
 import { AppFrame } from './AppFrame.tsx'
+import { LayoutRoot } from './LayoutRoot.tsx'
 import { createLayoutStore } from './stores.ts'
 import { LayoutController } from './service.ts'
 import { ThemePresenter } from './theme-presenter.ts'
@@ -22,6 +25,7 @@ import { ThemePresenter } from './theme-presenter.ts'
 // against; the frame components and the store factory are package-internal.
 export { LayoutController } from './service.ts'
 export type { ILayout } from './service.ts'
+export type { LayoutFrameOwnerProps } from './LayoutRoot.tsx'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -32,9 +36,16 @@ declare module '@deepseek-ai/cordis' {
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
-    // The 'root' entry itself is the runtime's built-in slot (declared
-    // there); these four are the frame's children, declared by the same
-    // register() call that contributes AppFrame. Session owners never pass
+    /**
+     * Replaceable visual arrangement of the official layout seats. The root
+     * owner supplies panel state/actions and delegated render callbacks; the
+     * frame owns placement only. AppFrame is the priority-0 fallback. Product
+     * shells register at a lower priority and must not redeclare the official
+     * child slots.
+     */
+    'layout.frame': { kind: 'single'; scope: 'session-maybe'; owner: import('./LayoutRoot.tsx').LayoutFrameOwnerProps }
+    // The 'root' entry itself is the runtime's built-in slot (declared there);
+    // these four remain children of LayoutRoot. Session owners never pass
     // sessionId: the framework injects it as a standard prop.
     /**
      * The whole left column. OCCUPIED by ui-sidebar's SidebarRoot, which
@@ -108,18 +119,19 @@ export interface DetailsOwnerProps {}
 export const inject = ['slots', 'theme']
 
 /**
- * Client plugin body: provide ctx.layout, then one register() call — AppFrame
- * into 'root' with the four child-slot declarations, the layout store seat,
- * and the inject hook that hands the store's bound actions to the service.
+ * Client plugin body: provide ctx.layout, register LayoutRoot with every child
+ * declaration and the layout store, then register AppFrame as the priority-0
+ * fallback in the frame seam.
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
   const layout = new LayoutController()
   ctx.effect(() => {
     const disposeService = ctx.reflect.provide('layout', layout)
-    const disposeRegistration = ctx.slots.register({
+    const disposeRoot = ctx.slots.register({
       name: 'root',
       children: {
+        'layout.frame': { kind: 'single', scope: 'session-maybe' },
         'sidebar': { kind: 'single', scope: 'root' },
         'conversation': { kind: 'single', scope: 'session-maybe' },
         'details': { kind: 'single', scope: 'session' },
@@ -134,9 +146,14 @@ export function apply(ctx: ClientContext): void {
         layout.attachPanels(actions)
         return {}
       },
+    }, LayoutRoot)
+    const disposeDefaultFrame = ctx.slots.register({
+      name: 'layout.frame',
+      priority: 0,
     }, AppFrame)
     return () => {
-      disposeRegistration()
+      disposeDefaultFrame()
+      disposeRoot()
       // provide()'s disposer settles asynchronously; teardown is synchronous fire-and-forget.
       void disposeService()
     }

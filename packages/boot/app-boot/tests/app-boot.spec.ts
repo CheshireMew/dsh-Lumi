@@ -564,8 +564,10 @@ describe('boot', () => {
     const absolutePlugin = join(dir, 'absolute.mjs')
     const shadow = join(dir, 'node_modules', '@deepseek-ai', 'dsh-system-prompt')
     const harnessPlugin = join(harness, 'node_modules', '@deepseek-ai', 'dsh-system-prompt')
+    const harnessNested = join(harness, 'node_modules', '@deepseek-ai', 'dsh-system-prompt-nested')
     mkdirSync(shadow, { recursive: true })
     mkdirSync(harnessPlugin, { recursive: true })
+    mkdirSync(harnessNested, { recursive: true })
     writeFileSync(join(shadow, 'package.json'), JSON.stringify({
       name: '@deepseek-ai/dsh-system-prompt',
       type: 'module',
@@ -583,8 +585,22 @@ describe('boot', () => {
       exports: './index.mjs',
     }))
     writeFileSync(join(harnessPlugin, 'index.mjs'), [
-      'export function apply(ctx) {',
+      'export async function apply(ctx) {',
       '  ctx.provide("harnessPluginLoaded", true)',
+      '  if (ctx.get("loadNestedHarnessPlugin")) {',
+      '    await ctx.loader.create({ name: "@deepseek-ai/dsh-system-prompt-nested" })',
+      '  }',
+      '}',
+      '',
+    ].join('\n'))
+    writeFileSync(join(harnessNested, 'package.json'), JSON.stringify({
+      name: '@deepseek-ai/dsh-system-prompt-nested',
+      type: 'module',
+      exports: './index.mjs',
+    }))
+    writeFileSync(join(harnessNested, 'index.mjs'), [
+      'export function apply(ctx) {',
+      '  ctx.provide("harnessNestedPluginLoaded", true)',
       '}',
       '',
     ].join('\n'))
@@ -622,6 +638,19 @@ describe('boot', () => {
       expect(ctx.get('absolutePluginLoaded')).toBe(true)
     } finally {
       await ctx.fiber.dispose()
+    }
+    const publicResolver = await boot(NAME, hostOwnedPath, undefined, (hostCtx) => {
+      hostCtx.provide('loadNestedHarnessPlugin', true)
+      hostCtx.loader.internal = undefined
+    }, harnessBaseUrl)
+    try {
+      expect(publicResolver.get('harnessPluginLoaded')).toBe(true)
+      expect(publicResolver.get('harnessNestedPluginLoaded')).toBe(true)
+      expect(publicResolver.get('shadowPluginLoaded')).toBeUndefined()
+      expect(publicResolver.get('relativePluginLoaded')).toBe(true)
+      expect(publicResolver.get('absolutePluginLoaded')).toBe(true)
+    } finally {
+      await publicResolver.fiber.dispose()
     }
   })
 

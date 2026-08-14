@@ -20,7 +20,7 @@ import {
  * `narrowExpanded` is the manual override that re-expands the auto-collapsed
  * sidebar over the squeezed center without rewriting the width preference.
  */
-type LayoutState = { sidebar: number; details: number; narrow: boolean; narrowExpanded: boolean }
+export type LayoutState = { sidebar: number; details: number; narrow: boolean; narrowExpanded: boolean }
 
 /**
  * Annotation twin of the actions literal below (the export needs a declared

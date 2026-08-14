@@ -49,10 +49,14 @@ const repositoryUrl = 'git+https://github.com/deepseek-harness/deepseek-harness.
 const publishedRepositoryUrl = 'git+https://github.com/deepseek-ai/deepseek-harness.git'
 /** Directories whose packages this repository publishes: one release member each. */
 const releaseMemberDirectory = /^(?:packages\/[^/]+\/[^/]+|apps\/[^/]+|vendor\/[^/]+)$/
+/** Product-layer packages are intentionally consumed only by this desktop workspace. */
+const privateProductPackagePrefix = '@dsh-anime/'
 
 const localArtifactDirs = new Set(['node_modules'])
 const appPackageFiles: Readonly<Record<string, readonly string[]>> = {
-  '@deepseek-ai/dsh': ['lib/*.js', 'config'],
+  // The embedded-launcher profile-boot export is a typed public API; its
+  // declaration graph ships beside the executable and bundled JS entry.
+  '@deepseek-ai/dsh': ['lib/*.js', 'lib/types/**/*.d.ts', 'config'],
   // The Web build emits sourcemaps for browser debugging; publishing them is
   // what the payload policy forbids, so the bundle ships without them.
   '@deepseek-ai/dsh-web-frontend': ['dist', '!dist/**/*.map'],
@@ -226,6 +230,7 @@ function checkWorkspace({ dir, manifest }: WorkspaceManifest): string[] {
   const isPublicLandlockPackage = isLandlockPackageDir
     && manifest.name !== undefined
     && publicLandlockPackages.has(manifest.name)
+  const isPrivateProductPackage = manifest.name?.startsWith(privateProductPackagePrefix) === true
 
   if (isPublicLandlockPackage) {
     if (manifest.private === true) {
@@ -239,6 +244,10 @@ function checkWorkspace({ dir, manifest }: WorkspaceManifest): string[] {
       || manifest.repository.url !== repositoryUrl
       || manifest.repository.directory !== expectedDirectory) {
       errors.push(`${label}: published Landlock package repository must use ${repositoryUrl} with directory ${expectedDirectory} for trusted publishing`)
+    }
+  } else if (isPrivateProductPackage) {
+    if (manifest.private !== true) {
+      errors.push(`${label}: product-layer package must set "private": true`)
     }
   } else if (releaseMemberDirectory.test(dir)) {
     // Release members state that they are publishable: npm refuses a private

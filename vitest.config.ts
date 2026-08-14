@@ -89,6 +89,11 @@ const testIncludes = [
   'scripts/**/*.spec.ts',
 ]
 
+// Fork-heavy Git, compiler, and subprocess suites saturate Windows process
+// creation well before the host's logical CPU count. Four workers keep their
+// existing deadlines meaningful without changing Linux or CI scheduling.
+const windowsMaxWorkers = process.platform === 'win32' ? 4 : undefined
+
 // The instrumented coverage gate sets this env; the exempt heavy suites then
 // run beside it uninstrumented (membership contract in scripts/coverage-exempt.ts).
 // A set-but-not-'1' value is a misconfiguration, not a silent no-op.
@@ -117,6 +122,7 @@ const processBoundTests = [
 export default defineConfig({
   plugins: [pathsPlugin(), standardDecoratorPlugin()],
   test: {
+    ...windowsMaxWorkers === undefined ? {} : { maxWorkers: windowsMaxWorkers },
     setupFiles: ['./scripts/test-invariants.ts'],
     // .tsx: client component specs (jsdom via per-file @vitest-environment pragma).
     include: testIncludes,
@@ -128,6 +134,7 @@ export default defineConfig({
         plugins: [pathsPlugin(), standardDecoratorPlugin()],
         test: {
           name: 'thread-safe',
+          ...windowsMaxWorkers === undefined ? {} : { maxWorkers: windowsMaxWorkers },
           execArgv: vitestExecArgv,
           // Node 24 has aborted in its CJS lexer (v8::ToLocalChecked Empty
           // MaybeLocal in cjs_lexer::Parse) from worker threads on macOS,
@@ -146,6 +153,7 @@ export default defineConfig({
         plugins: [pathsPlugin(), standardDecoratorPlugin()],
         test: {
           name: 'process-bound',
+          ...windowsMaxWorkers === undefined ? {} : { maxWorkers: windowsMaxWorkers },
           execArgv: vitestExecArgv,
           pool: 'forks',
           setupFiles: ['./scripts/test-invariants.ts'],

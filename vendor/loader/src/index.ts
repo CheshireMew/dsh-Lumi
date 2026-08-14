@@ -72,6 +72,13 @@ export class Loader extends EntryTree {
   public name = 'loader'
   public internal = ModuleLoader.fromInternal()
 
+  /**
+   * Public-runtime fallback for embedders that do not expose Node's internal
+   * ESM loader (notably Electron utility processes). EntryTree uses it only
+   * when `internal` is unavailable.
+   */
+  public importModule?: (specifier: string, parentURL: string) => Promise<unknown>
+
   public builtins: Dict<any> = Object.create(null)
 
   constructor(ctx: Context, public config: Loader.Config = {}) {

@@ -1,0 +1,35 @@
+# Agent Note: Windows compatibility for canonical repository gates
+
+Status: implemented
+
+English | [中文](2026-08-14-windows-gate-compatibility.zh.md)
+
+## Problem
+
+The repository's canonical snapshots and aggregate gates must validate the same product behavior on Windows without changing the shipped Windows shell or recording a second result for every POSIX fixture. Several test launchers assumed `bash` was already on `PATH`, JSONL hydration inserted native paths as unescaped text, and nested JSON strings exposed a second path-escaping level. The unit-test aggregate also launched sixteen fork workers while `check:all` ran several process-heavy gates concurrently, causing Git, Oxlint, Lefthook, and lifecycle tests to exceed deadlines that remain sufficient when the suites own the machine resources they measure.
+
+## Decision
+
+Source-mode example launch resolution prepends the Git for Windows Bash directory on Windows. This applies to the shared Loader-smoke, ACP, SDK, and Headless subprocess paths while leaving product profiles unchanged: shipped Windows profiles continue to select PowerShell and the Windows ACL runner. A platform-specific Headless fixture asserts that selection directly, and the SDK persistent-Bash scenario is explicitly POSIX-only because the underlying terminal-inspection provider rejects Windows by design.
+
+Portable session fixtures are realized as JSON values rather than text substitution. String fields that themselves contain JSON are decoded recursively, tokens are replaced at the semantic value, and each layer is serialized again. Snapshot normalization recognizes both native filesystem spellings and their JSON-string spellings; canonical mode collapses one or more Windows separators to one `/` only inside cwd-rooted paths. One committed fixture therefore remains valid across supported hosts without accepting malformed JSON or hiding unrelated backslashes.
+
+Vitest uses at most four fork workers on Windows. The local `check:all` aggregate runs one top-level gate at a time on Windows, because its child gates already own internal parallelism and several spawn process trees. Other platforms retain their existing worker limits. Test deadlines and product timeouts do not change.
+
+The client-domain graph gate accepts only the exact cross-domain edges already present in the official tree and rejects every new edge; removing an accepted source edge needs no allowlist update. The vendor-rescope gate likewise excludes the exact files where bare `cordis` is a runtime id, locale namespace, preset id, or product term rather than an npm package specifier. Both gates remain active instead of failing on their own official baseline.
+
+## Verification
+
+The Windows keyless snapshot lane covers the full ACP scenario table, SDK replay, Headless profile command, translation prompt, and bundled-skill snapshot. Focused normalization coverage pins Windows paths inside nested JSON strings. The unit-test aggregate exercises the Git worktree, merge-driver, installer-lock, Oxlint ownership, generated client catalog, and real subagent lifecycle files under the Windows worker limit. `check:all` remains the final aggregate acceptance command.
+
+## Alternatives considered
+
+**Increase test timeouts.** The failures came from competing process trees rather than slow product behavior. Longer deadlines would hide resource saturation, delay genuine failures, and leave the same nondeterminism on busier Windows hosts.
+
+**Record Windows copies of every portable snapshot.** Most scenarios have identical semantics across hosts, so parallel fixture trees would duplicate expected behavior and drift. Platform-specific fixtures remain limited to behavior that intentionally differs, such as the shipped PowerShell profile.
+
+**Disable baseline-failing static gates.** Turning off the client-domain or vendor-rescope checks would also admit new violations. Exact inventories preserve the gates' value while making the inherited debt visible and allowing it to shrink without maintenance work.
+
+## Consequences
+
+Windows validates the canonical repository behavior without changing production shell selection or maintaining a parallel snapshot corpus except where the product surface is intentionally platform-specific. Aggregate gates take longer on Windows, but failures retain their diagnostic meaning and no longer depend on transient process saturation. The explicit client-domain and rescope exception lists are reviewable debt inventories: new violations fail immediately, while deleting existing debt always improves the result.

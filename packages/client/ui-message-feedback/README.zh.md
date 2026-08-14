@@ -8,6 +8,8 @@
 
 变更通过 `ctx.remote.messageFeedback` 提交，按条目的 compare-and-set 由 Host 负责。每次 `put` 和 `delete` 都携带本 controller 最后观察到的 `version`；`version-conflict` 响应会带回权威条目，因此竞争失败时直接用该响应对账，无需重新拉取整个 Session。变更按 Session 串行，排队中的操作总是与已提交的版本比较。再次点击已记录的评分会撤回反馈；切换到另一侧会保留已有备注。
 
+Host 接受评分变化后，浏览器插件会发出 `message-feedback/change`，其中包含 Session id、消息 id 和持久化前后的评分。可选界面插件可以响应该事件；失败或没有实际变化的修改不会发出事件。
+
 `/client` 导出插件本体（`apply`/`inject`）、`MessageFeedbackActions` 组件、`MessageFeedbackController` 类以及注入面类型。
 
 ## 模型体验

@@ -13,7 +13,7 @@
 
 import { writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { FiberState, type Context } from '@deepseek-ai/cordis'
 import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
@@ -21,11 +21,13 @@ import {
   boot,
   composeEntries,
   healProfilesModuleFallback,
+  initProfile,
   installFailLoud,
   loadOptionalPatches,
   loadOverlayPatches,
   loadProfile,
   PROFILE_PATCH_FILENAME,
+  resolveProfileDir,
   watchUserPatches,
   type Profile,
 } from '@deepseek-ai/dsh-app-boot'
@@ -37,6 +39,8 @@ const SHIPPED_PRESET_ROOT = fileURLToPath(new URL('../config/agent-presets/', im
 import { DSH_LAUNCH_ENVIRONMENT_KEY, type LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
 import { provideCmdline } from '@deepseek-ai/dsh-cmdline'
 import { createProcessShutdown, type ProcessShutdown } from './process-shutdown.ts'
+
+export type { ProcessShutdown } from './process-shutdown.ts'
 
 const NAME = 'dsh'
 
@@ -93,11 +97,19 @@ export function resolveTelemetryPatch(disabledEnv: string | undefined, hasRow: b
  * on the same file, so both compose over the identical base).
  * @param name - the profile name.
  * @param userLayer - `false` skips parsing `cordis.patch.yml` (the default dump).
+ * @param installAnchor - package.json whose dependency closure resolves profile bundles.
+ * @param initialBundles - optional bundle list used only when an embedded launcher's profile is absent.
  * @returns the loaded profile.
  */
-export function prepareProfile(name: string, userLayer = true): Profile {
-  healProfilesModuleFallback(INSTALL_ANCHOR)
-  const profile = loadProfile(NAME, name, INSTALL_ANCHOR, undefined, { userLayer })
+export function prepareProfile(
+  name: string,
+  userLayer = true,
+  installAnchor = INSTALL_ANCHOR,
+  initialBundles?: readonly string[],
+): Profile {
+  if (initialBundles !== undefined) initProfile(resolveProfileDir(name), initialBundles)
+  healProfilesModuleFallback(installAnchor)
+  const profile = loadProfile(NAME, name, installAnchor, undefined, { userLayer })
   writeFileSync(join(profile.dir, PROFILE_ROOT_FILENAME), PROFILE_ROOT_CONFIG)
   return profile
 }
@@ -142,8 +154,10 @@ function allPatches(composed: ComposedProfile): PatchOptions[] {
 function composeProfile(
   name: string,
   patchFiles: readonly string[],
+  installAnchor: string,
+  initialBundles?: readonly string[],
 ): ComposedProfile {
-  const profile = prepareProfile(name)
+  const profile = prepareProfile(name, true, installAnchor, initialBundles)
   const homePatches = loadOptionalPatches(NAME, homePatchPath()) ?? []
   const overlays = patchFiles.flatMap(file => loadOverlayPatches(NAME, resolve(file)))
   const bundlePatches = profile.layers.flatMap(layer => layer.patches)
@@ -180,6 +194,14 @@ export interface RunProfileOptions {
   patchFiles: readonly string[]
   /** The invocation's inner arguments, handed to the tree through `ctx.cmdlineArgs`. */
   args: readonly string[]
+  /**
+   * package.json whose dependency closure owns the profile bundles. Embedded
+   * launchers pass their own manifest so profile healing installs beside the
+   * launcher rather than mutating the CLI package. Defaults to this CLI.
+   */
+  installAnchor?: string
+  /** Bundle stack used only to initialize a missing embedded-launcher profile. */
+  initialBundles?: readonly string[]
 }
 
 /**
@@ -205,7 +227,12 @@ function suppressShutdownError(ctx: Context, signal: AbortSignal, error: unknown
  * @returns the settled root context and the shutdown controller.
  */
 export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Context; shutdown: ProcessShutdown }> {
-  const composed = composeProfile(options.profile, options.patchFiles)
+  const composed = composeProfile(
+    options.profile,
+    options.patchFiles,
+    options.installAnchor ?? INSTALL_ANCHOR,
+    options.initialBundles,
+  )
   const app: { current?: Context } = {}
   const shutdown = createProcessShutdown(async () => { await app.current?.fiber.dispose() })
   const signalShutdown = new AbortController()
@@ -256,7 +283,7 @@ export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Con
       args: options.args,
       exit: code => void shutdown.shutdown(code),
     })
-  })
+  }, pathToFileURL(rootConfig).href)
   app.current = ctx
   // A surface can dispose the whole tree while boot or this post-boot watcher
   // setup is still in flight — a signal, or a fast one-shot's appExit. Loader

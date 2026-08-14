@@ -88,7 +88,7 @@ class Hmr extends Service {
 
   public baseDir: string
 
-  private internal: ModuleLoader
+  private internal: ModuleLoader | undefined
   private watcher!: FSWatcher
   private readonly configs = new Map<string, ConfigRegistration>()
   private readonly configRefreshes = new WeakMap<object, ConfigRefresh>()
@@ -117,7 +117,7 @@ class Hmr extends Service {
 
   constructor(ctx: Context, public config: Hmr.Config) {
     super(ctx, 'hmr')
-    if (!this.ctx.loader.internal) {
+    if (!this.ctx.loader.internal && config.root.length > 0) {
       throw new Error('--expose-internals is required for HMR service')
     }
     this.internal = this.ctx.loader.internal
@@ -190,9 +190,9 @@ class Hmr extends Service {
    * Resolve a module specifier to a URL, compatible with Node 22-24.
    */
   private async _resolve(specifier: string, parentURL: string, attrs: ImportAttributes): Promise<ResolveResult> {
-    switch (this.internal.version) {
-      case 'v1': return await this.internal.resolve(specifier, parentURL, attrs)
-      case 'v2': return this.internal.resolveSync(parentURL, { specifier, attributes: attrs })
+    switch (this.internal!.version) {
+      case 'v1': return await this.internal!.resolve(specifier, parentURL, attrs)
+      case 'v2': return this.internal!.resolveSync(parentURL, { specifier, attributes: attrs })
     }
   }
 
@@ -218,7 +218,7 @@ class Hmr extends Service {
     // Collect externals before opening the watcher so every post-ready change
     // is observed by listeners that already have their classification state.
     const mainUrl = pathToFileURL(resolve(process.argv[1])).href
-    const mainJob = this.internal.loadCache.get(mainUrl)
+    const mainJob = this.internal?.loadCache.get(mainUrl)
     if (mainJob) {
       this.externals = await loadDependencies(mainJob)
     } else {
@@ -329,7 +329,7 @@ class Hmr extends Service {
   ]
 
   async getLinked(url: string) {
-    const job = this.internal.loadCache.get(url)
+    const job = this.internal!.loadCache.get(url)
     if (!job) return []
     const linked = await job.linked
     return Array.prototype.map.call(linked, (job: ModuleJob) => job.url) as string[]
@@ -416,7 +416,7 @@ class Hmr extends Service {
         try {
           const { url } = await this._resolve(name, baseUrl, {})
           if (this.declined.has(url)) continue
-          const job = this.internal.loadCache.get(url)
+          const job = this.internal!.loadCache.get(url)
           const plugin = this.ctx.loader.unwrapExports(job?.module?.getNamespace())
           if (!job || !plugin) continue
           pending.set(job, plugin)
@@ -463,9 +463,9 @@ class Hmr extends Service {
     const require = createRequire(import.meta.url)
     for (const filename of this.accepted) {
       // Backup and clear ESM loadCache
-      const job = Map.prototype.get.call(this.internal.loadCache, filename)
+      const job = Map.prototype.get.call(this.internal!.loadCache, filename)
       esmBackup[filename] = job
-      Map.prototype.delete.call(this.internal.loadCache, filename)
+      Map.prototype.delete.call(this.internal!.loadCache, filename)
 
       // Backup and clear CJS Module._cache
       try {
@@ -481,7 +481,7 @@ class Hmr extends Service {
 
     const rollback = () => {
       for (const filename in esmBackup) {
-        Map.prototype.set.call(this.internal.loadCache, filename, esmBackup[filename])
+        Map.prototype.set.call(this.internal!.loadCache, filename, esmBackup[filename])
       }
       for (const filepath in cjsBackup) {
         require.cache[filepath] = cjsBackup[filepath]

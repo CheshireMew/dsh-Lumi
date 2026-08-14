@@ -153,6 +153,8 @@ export abstract class EntryTree {
       info.offset += 3
       if (this.ctx.loader.internal) {
         return await this.ctx.loader.internal.import(name, this.ctx.baseUrl!, {})
+      } else if (this.ctx.loader.importModule) {
+        return await this.ctx.loader.importModule(name, this.ctx.baseUrl!)
       } else if (name.startsWith('.')) {
         return await import(/* @vite-ignore */new URL(name, this.ctx.baseUrl).href)
       } else {

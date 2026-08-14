@@ -205,10 +205,10 @@ describe('the real workspace surface', () => {
       expect(['single', 'list', 'keyed', 'chain']).toContain(entry.kind)
       expect(['root', 'session', 'session-maybe']).toContain(entry.scope)
     }
-    // The frame root is the canonical trap: occupied by the shipped app frame,
+    // The frame root is the canonical trap: occupied by the shipped layout root,
     // so a dynamic package registering there replaces the whole UI.
     const root = entries.find(entry => entry.key === 'root')
     expect(root?.replaceRisk).toBe('shadows-shipped-ui')
-    expect(root?.occupants.join(' ')).toContain('AppFrame')
+    expect(root?.occupants.join(' ')).toContain('LayoutRoot')
   })
 })

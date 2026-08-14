@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 // Client apply wiring under the terminal register form: ctx.layout provided,
-// ONE register() call declares the three child slots + seats the store factory
-// + wires the panel actions through the inject hook; teardown cascades
+// LayoutRoot declares the frame seam and official child slots, seats the store
+// factory, and wires panel actions; AppFrame occupies the priority-0 fallback.
+// Teardown cascades
 // (service unprovided + declarations gone + registration cleared). Node half
 // and the invariant companion ride along — one line exposes the aggregate
 // coverage gate still requires exercised.
@@ -13,6 +14,7 @@ import { SlotRegistry } from '@deepseek-ai/dsh-client-runtime/client'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { apply as themeApply, inject as themeInject, ThemeRuntime } from '@deepseek-ai/dsh-client-ui-theme/client'
 import { apply, inject, LayoutController } from '@deepseek-ai/dsh-client-ui-layout/client'
+import { AppFrame } from '@deepseek-ai/dsh-client-ui-layout/src/client/AppFrame.tsx'
 import { apply as nodeApply } from '@deepseek-ai/dsh-client-ui-layout'
 import * as invariant from '@deepseek-ai/dsh-client-ui-layout/invariant'
 
@@ -40,17 +42,30 @@ describe('ui-layout client apply', () => {
     expect(inject).toEqual(['slots', 'theme'])
   })
 
-  it('provides ctx.layout and registers AppFrame into root with the three child declarations', async () => {
+  it('provides ctx.layout, owns the child ledger at root, and registers the default frame', async () => {
     const { ctx, slots } = await bench()
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     expect(ctx.get('layout')).toBeInstanceOf(LayoutController)
-    // The one register() call occupied 'root'…
+    // LayoutRoot occupies 'root' and exclusively owns the child ledger.
     expect(slots.entries('root')).toHaveLength(1)
-    // …and declared the three children in the ledger.
+    expect(slots.spec('layout.frame')).toEqual({ kind: 'single', scope: 'session-maybe' })
+    expect(slots.entries('layout.frame')).toHaveLength(1)
+    expect(slots.entries('layout.frame')[0]!.component).toBe(AppFrame)
     expect(slots.spec('sidebar')).toEqual({ kind: 'single', scope: 'root' })
     expect(slots.spec('conversation')).toEqual({ kind: 'single', scope: 'session-maybe' })
     expect(slots.spec('details')).toEqual({ kind: 'single', scope: 'session' })
+  })
+
+  it('lets a lower-priority product frame shadow AppFrame and falls back when it unloads', async () => {
+    const { ctx, slots } = await bench()
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    const ProductFrame = () => null
+    const disposeProduct = slots.register({ name: 'layout.frame', priority: -100 }, ProductFrame)
+    expect(slots.entries('layout.frame').map(entry => entry.component)).toEqual([ProductFrame, AppFrame])
+    disposeProduct()
+    expect(slots.entries('layout.frame').map(entry => entry.component)).toEqual([AppFrame])
   })
 
   it('injects no business face and attaches the layout actions', async () => {
@@ -99,6 +114,7 @@ describe('ui-layout client apply', () => {
     await fiber.dispose()
     expect(ctx.get('layout')).toBeUndefined()
     expect(slots.entries('root')).toHaveLength(0)
+    expect(slots.spec('layout.frame')).toBeUndefined()
     expect(slots.spec('sidebar')).toBeUndefined()
     // The built-in root declaration survives entry teardown (runtime-owned).
     expect(slots.spec('root')).toEqual({ kind: 'single', scope: 'root' })

@@ -34,6 +34,14 @@ pnpm run build
 pnpm dsh web
 ```
 
+## 二次元桌面版
+
+本仓库还包含一个增量式 Electron 桌面体验，并在外层提供二次元角色界面。官方 Harness profile、会话、插件和 Web UI 仍是产品核心。详见[二次元桌面版指南](docs/user/guide/anime-desktop.md)。
+
+```sh
+pnpm run dev:anime
+```
+
 ## 社区与支持
 
 - 欢迎通过 [GitHub Discussions](https://github.com/deepseek-ai/deepseek-harness/discussions) 提交反馈或 bug 报告。

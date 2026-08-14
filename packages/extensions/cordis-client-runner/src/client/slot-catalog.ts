@@ -108,7 +108,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation\', () => ctx.slots.register(\n      { name: \'conversation\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-layout/src/client/index.ts:62',
+    source: 'packages/client/ui-layout/src/client/index.ts:73',
   },
   {
     key: 'conversation.chat.assistant-actions',
@@ -156,6 +156,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     slotInject: '',
     declaredBy: 'an entry in \'conversation.chat.node\' (client-ui-conversation), so it exists while that entry is mounted',
     occupants: [
+      '@dsh-anime/client-character AnimeVoiceAction id \'anime-voice\'',
       'client-ui-message-feedback MessageFeedbackActions id \'feedback\'',
     ],
     replaceRisk: 'none',
@@ -216,11 +217,12 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
       },
     ],
     ownerProps: [
-      '/** Stable owner currency delivered to one keyed Chat business renderer. */\nexport interface ChatNodeOwnerProps {\n  /** Selected Tool call, when the shared details store names one. */\n  selectedCallId?: CallId | undefined\n  /** Session workspace root; Tool summaries display paths relative to it. */\n  cwd?: string | undefined\n  openFile: (path: string) => void\n  inspectCall: (callId: CallId) => void\n  forkAt: (seq: number) => void\n  /** Resolve a session-authorized historical image for inline display. */\n  loadImage: (attachment: ImageAttachmentRef) => Promise<string>\n  fileMentions: (owner: TurnTailOwnerProps) => MarkdownFileMentions | undefined\n}',
+      '/** Stable owner currency delivered to one keyed Chat business renderer. */\nexport interface ChatNodeOwnerProps {\n  /** Selected Tool call, when the shared details store names one. */\n  selectedCallId?: CallId | undefined\n  /** Session workspace root; Tool summaries display paths relative to it. */\n  cwd?: string | undefined\n  openFile: (path: string) => void\n  /** Select one Tool call and open the official details panel. */\n  openDetails?: ((target: SelectionTarget) => void) | undefined\n  inspectCall: (callId: CallId) => void\n  forkAt: (seq: number) => void\n  /** Resolve a session-authorized historical image for inline display. */\n  loadImage: (attachment: ImageAttachmentRef) => Promise<string>\n  fileMentions: (owner: TurnTailOwnerProps) => MarkdownFileMentions | undefined\n}',
     ],
     ownerPropsReferences: [
       'ImageAttachmentRef',
       'MarkdownFileMentions',
+      'SelectionTarget',
       'TurnTailOwnerProps',
     ],
     standardProps: [
@@ -1046,7 +1048,42 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'details\', () => ctx.slots.register(\n      { name: \'details\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-layout/src/client/index.ts:72',
+    source: 'packages/client/ui-layout/src/client/index.ts:83',
+  },
+  {
+    key: 'layout.frame',
+    kind: 'single',
+    scope: 'session-maybe',
+    summary: 'Replaceable visual arrangement of the official layout seats.',
+    doc: 'Replaceable visual arrangement of the official layout seats. The root\nowner supplies panel state/actions and delegated render callbacks; the\nframe owns placement only. AppFrame is the priority-0 fallback. Product\nshells register at a lower priority and must not redeclare the official\nchild slots.',
+    registerOptions: [],
+    ownerProps: [
+      '/** Presentation-neutral owner share supplied to every `layout.frame` entry. */\nexport interface LayoutFrameOwnerProps {\n  /** Current root layout-store snapshot. Frames read it but mutate through actions only. */\n  panels: LayoutState\n  /** Bound layout-store actions; their identity is stable for the root entry lifetime. */\n  actions: PanelActions\n  /** Whether the selected session is non-blank and may expose a details panel. */\n  detailsAvailable: boolean\n  /** Render the official sidebar seat with frame-resolved column geometry. */\n  renderSidebar: (owner: { collapsed: boolean; width: number }) => ReactNode\n  /** Render the official current-session-optional conversation seat. */\n  renderConversation: () => ReactNode\n  /** Render the official strict-session details seat. */\n  renderDetails: () => ReactNode\n  /** Render additive frame-wide overlays. */\n  renderOverlay: () => ReactNode\n}',
+    ],
+    ownerPropsReferences: [
+      'LayoutState',
+      'PanelActions',
+    ],
+    standardProps: [
+      'useSessions: SnapshotSelectorHook<SessionListState>',
+      'useWorkspaces: SnapshotSelectorHook<import(\'./workspaces/service.ts\').WorkspaceListState>',
+      'useSession: MaybeSnapshotSelectorHook<ConversationSnapshot>',
+      'sessionId: SessionId | undefined',
+      'useProjection: UseProjection',
+      'useInput: MaybeSnapshotSelectorHook<InputState>',
+      'inputActions: InputActions | undefined',
+    ],
+    keyDomain: '',
+    hookContext: '',
+    slotInject: '',
+    declaredBy: 'an entry in \'root\' (client-ui-layout), so it exists while that entry is mounted',
+    occupants: [
+      '@dsh-anime/client-shell AnimeFrame',
+      'client-ui-layout AppFrame',
+    ],
+    replaceRisk: 'shadows-shipped-ui',
+    example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'layout.frame\', () => ctx.slots.register(\n      { name: \'layout.frame\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
+    source: 'packages/client/ui-layout/src/client/index.ts:46',
   },
   {
     key: 'root',
@@ -1068,7 +1105,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     slotInject: '',
     declaredBy: 'the runtime itself (built in; always present)',
     occupants: [
-      'client-ui-layout AppFrame',
+      'client-ui-layout LayoutRoot',
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'root\', () => ctx.slots.register(\n      { name: \'root\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
@@ -1184,6 +1221,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     slotInject: '',
     declaredBy: 'an entry in \'settings.section\' (client-ui-settings-general), so it exists while that entry is mounted',
     occupants: [
+      '@dsh-anime/client-character AnimeSettingsRow id \'anime-character\'',
       'client-locale LanguageRow id \'language\'',
       'client-ui-agent-preset AgentPresetRow id \'agent-preset\'',
       'client-ui-conversation EnterBehaviorRow id \'composer-enter\'',
@@ -1472,7 +1510,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     occupants: [],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'shell.overlay\', () => ctx.slots.register(\n      { name: \'shell.overlay\', id: \'my-entry\', order: 100, label: \'My entry\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-layout/src/client/index.ts:83',
+    source: 'packages/client/ui-layout/src/client/index.ts:94',
   },
   {
     key: 'sidebar',
@@ -1498,7 +1536,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'sidebar\', () => ctx.slots.register(\n      { name: \'sidebar\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-layout/src/client/index.ts:49',
+    source: 'packages/client/ui-layout/src/client/index.ts:60',
   },
   {
     key: 'sidebar.footer.action',

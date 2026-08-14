@@ -22,10 +22,12 @@
 // llm seam post-boot with installLlmReplay on the settled root ctx
 // (the plugin-row path discards the ReplayHandle; the direct install keeps
 // assertConsumed for the teardown fixture-consumption check).
+import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, delimiter, dirname, join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import type { Page } from 'playwright'
 import { expect } from 'vitest'
@@ -103,6 +105,54 @@ const WEB_PATCH_PATH = join(REPO_ROOT, 'packages/bundle/web-app/cordis.patch.yml
 const INSTALL_ANCHOR = join(REPO_ROOT, 'apps/cli/package.json')
 /** The deployment's own agent-preset root, shipped beside the app's config. */
 const SHIPPED_PRESET_DIR = join(REPO_ROOT, 'apps/cli/config/agent-presets')
+const WINDOWS_POSIX_RUNNER = join(REPO_ROOT, 'apps/web/tests/windows-posix-runner.ts')
+const TSX_LOADER = pathToFileURL(createRequire(join(REPO_ROOT, 'package.json')).resolve('tsx')).href
+const WINDOWS_POSIX_PRESET_FILES = [
+  'standard/agent.cordis.yml',
+  'code/agent.cordis.yml',
+  'cordis/agent.cordis.yml',
+] as const
+
+/** Locate the Git for Windows bash shipped beside the git executable used by this checkout. */
+function windowsGitBashBin(): string {
+  const fromPath = (process.env.PATH ?? '')
+    .split(delimiter)
+    .filter(Boolean)
+    .map(entry => join(entry, 'bash.exe'))
+  let gitCandidates: string[] = []
+  try {
+    gitCandidates = execFileSync('where.exe', ['git'], { encoding: 'utf8' })
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map(git => join(dirname(dirname(git)), 'bin', 'bash.exe'))
+  } catch {
+    // A missing `where.exe` or git is reported below with the resolved candidates.
+  }
+  const bash = [...fromPath, ...gitCandidates].find(existsSync)
+  if (bash === undefined) {
+    throw new Error('web e2e Windows POSIX replay requires Git for Windows bash beside the active git executable')
+  }
+  return dirname(bash)
+}
+
+/** Copy the shipped preset catalog and select its bash rows without changing product defaults. */
+async function createWindowsPosixPresetRoot(workspaceCwd: string): Promise<string> {
+  const target = join(workspaceCwd, '.dsh-web-e2e-posix-presets')
+  await cp(SHIPPED_PRESET_DIR, target, { recursive: true })
+  for (const relative of WINDOWS_POSIX_PRESET_FILES) {
+    const file = join(target, relative)
+    const source = await readFile(file, 'utf8')
+    const bashCondition = "disabled: !!js process.platform === 'win32'"
+    const pwshCondition = "disabled: !!js process.platform !== 'win32'"
+    if (!source.includes(bashCondition) || !source.includes(pwshCondition)) {
+      throw new Error(`web e2e Windows POSIX replay cannot select shell rows in ${relative}`)
+    }
+    await writeFile(file, source
+      .replace(bashCondition, 'disabled: false')
+      .replace(pwshCondition, 'disabled: true'))
+  }
+  return target
+}
 
 // Replay publishes the provider catalog the gateway routes to (providers
 // mode, never catch-all: with llm-deepseek disabled no adapter exists, so a
@@ -185,6 +235,18 @@ export interface WebScaffold {
 
 /** Options for {@link launchWebScaffold}. */
 export interface LaunchOptions {
+  /**
+   * Installation package whose dependency closure supplies bare plugin
+   * names. Defaults to the shipped CLI; embedders pass their own app manifest
+   * so an added overlay is resolved exactly as it is in production.
+   */
+  installAnchor?: string
+  /**
+   * Keep the shipped PowerShell selection on Windows. Ordinary replay uses
+   * Git Bash and a copied preset catalog so the repository's POSIX-recorded
+   * fixtures and goldens remain one canonical cross-host corpus.
+   */
+  nativeWindowsShell?: boolean
   /**
    * Optional product overlay applied after the shipped Web surface and before
    * the scaffold's hermetic test patches, matching the launcher's `--patch`
@@ -318,6 +380,28 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     }
   }
   const workspaceCwd = await realpath(await mkdtemp(join(tmpdir(), 'dsh-web-e2e-ws-')))
+  const windowsPosixReplay = process.platform === 'win32' && options.nativeWindowsShell !== true
+  const originalPath = process.env.PATH
+  let shellEnvironmentRestored = false
+  const restoreShellEnvironment = (): void => {
+    if (shellEnvironmentRestored || !windowsPosixReplay) return
+    shellEnvironmentRestored = true
+    if (originalPath === undefined) Reflect.deleteProperty(process.env, 'PATH')
+    else process.env.PATH = originalPath
+  }
+  let shippedPresetDir = SHIPPED_PRESET_DIR
+  const windowsPosixTmp = join(workspaceCwd, '.dsh-web-e2e-posix-tmp')
+  try {
+    if (windowsPosixReplay) {
+      process.env.PATH = [windowsGitBashBin(), originalPath ?? ''].join(delimiter)
+      await mkdir(windowsPosixTmp)
+      shippedPresetDir = await createWindowsPosixPresetRoot(workspaceCwd)
+    }
+  } catch (error) {
+    restoreShellEnvironment()
+    await rm(workspaceCwd, { recursive: true, force: true })
+    throw error
+  }
   // Isolated harness home: the settings/credentials rows resolve $DSH_HOME
   // paths at load, and an in-process boot must NEVER touch the developer's
   // real ~/.dsh document or credential file.
@@ -357,6 +441,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     const failures: unknown[] = [error]
     await rm(workspaceCwd, { recursive: true, force: true }).catch((cleanupError: unknown) => failures.push(cleanupError))
     restoreSkillRootEnvironment()
+    restoreShellEnvironment()
     if (failures.length > 1) throw new AggregateError(failures, 'web scaffold temp-root setup failed')
     throw error
   }
@@ -368,10 +453,31 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
   // drifting).
   const basePatches = loadOverlayPatches('web e2e scaffold', BASE_PATCH_PATH)
   const surfacePatches = loadOverlayPatches('web e2e scaffold', WEB_PATCH_PATH)
+  const windowsPosixPatches: PatchOptions[] = windowsPosixReplay
+    ? [
+      // Git Bash cannot create its signal pipe inside the Windows ACL
+      // runner's restricted token. These deterministic recorded commands
+      // already run in an owned temp workspace, so the compatibility lane
+      // uses a pass-through runner while preserving the sandbox-mode service
+      // contract. Native Windows lanes retain the shipped ACL runner.
+      {
+        id: 'sandbox',
+        config: {
+          runnerCommand: [
+            process.execPath, '--import', TSX_LOADER, WINDOWS_POSIX_RUNNER,
+            '--posix-tmp', windowsPosixTmp,
+          ],
+          runnerFailureSignatures: ['web-e2e-posix-runner:'],
+        },
+      },
+      { id: 'bash-sandbox', disabled: false },
+      { id: 'pwsh-sandbox', disabled: true },
+    ]
+    : []
   const extraOverlayPatches = options.extraOverlayPath === undefined
     ? []
     : loadOverlayPatches('web e2e scaffold', options.extraOverlayPath)
-  const composedRows = composeEntries([basePatches, surfacePatches, extraOverlayPatches])
+  const composedRows = composeEntries([basePatches, surfacePatches, windowsPosixPatches, extraOverlayPatches])
   const webRuntimeConfig = composedRows.find(row => row.id === 'web-runtime')?.config as {
     surfaceContext?: boolean
   } | undefined
@@ -379,6 +485,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
   const patches: PatchOptions[] = [
     ...basePatches,
     ...surfacePatches,
+    ...windowsPosixPatches,
     ...extraOverlayPatches,
     // The roster's `roots` is an assembly fact AppCLIEntry resolves and patches
     // in, exactly like `distIndex` on the webserver row — the shipped preset
@@ -392,7 +499,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       id: 'agent-presets',
       config: {
         default: 'standard',
-        roots: [{ path: SHIPPED_PRESET_DIR, trust: 'system' }],
+        roots: [{ path: shippedPresetDir, trust: 'system' }],
         includeUserRoot: false,
       },
     },
@@ -467,7 +574,19 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       ? []
       // Never the derived harness-home root: a developer's own presets must not
       // be able to change a golden, whatever roots a scenario asks for.
-      : [{ id: 'agent-presets', config: { ...options.agentPresets, includeUserRoot: false } }],
+      : [{
+        id: 'agent-presets',
+        config: {
+          ...options.agentPresets,
+          roots: options.agentPresets.roots.map(root => ({
+            ...root,
+            path: windowsPosixReplay && resolve(root.path) === resolve(SHIPPED_PRESET_DIR)
+              ? shippedPresetDir
+              : root.path,
+          })),
+          includeUserRoot: false,
+        },
+      }],
     ...options.toolsMode === undefined ? [] : [{ id: 'tools', config: { mode: options.toolsMode } }],
     // The shipped Web bundle already owns both runners and the Cordis UI. This
     // scenario adds only the model-facing tools that exercise those services.
@@ -501,7 +620,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     // The production module-resolution setup: an empty profile root inside the temp
     // harness home, with bare plugin names resolving through the flat module
     // fallback the launcher heals under <home>/profiles.
-    healProfilesModuleFallback(INSTALL_ANCHOR, harnessHome)
+    healProfilesModuleFallback(options.installAnchor ?? INSTALL_ANCHOR, harnessHome)
     const profileDir = join(harnessHome, 'profiles', 'scaffold')
     await mkdir(profileDir, { recursive: true })
     const rootConfig = join(profileDir, 'cordis.yml')
@@ -571,6 +690,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     const cleanupFailures = await cleanupScaffoldWorld(ctx, workspaceCwd, persistenceRoot)
     restoreCredentialEnvironment()
     restoreSkillRootEnvironment()
+    restoreShellEnvironment()
     if (cleanupFailures.length > 0) {
       throw new AggregateError([error, ...cleanupFailures], 'web scaffold setup failed and cleanup was incomplete')
     }
@@ -619,6 +739,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       } finally {
         restoreCredentialEnvironment()
         restoreSkillRootEnvironment()
+        restoreShellEnvironment()
       }
       if (failures.length > 0) throw new AggregateError(failures, 'web scaffold teardown failed')
     },
@@ -701,13 +822,17 @@ export function fixtureUserPrompts(fixtureText: string): string[] {
  * @returns the realized fixture text.
  */
 export function realizeSeedFixture(scaffold: WebScaffold, fixtureText: string, id: string): string {
+  // A fixture is JSONL, so Windows backslashes must enter it in JSON-escaped
+  // form. Replacing the token with a raw path first makes the header invalid
+  // (`\U`, `\T`, ... are not JSON escapes) before it can be parsed.
+  const serializedCwd = JSON.stringify(scaffold.workspaceCwd).slice(1, -1)
   const realized = fixtureText
     .split('{{sessionId}}').join(id)
-    .split('{{cwd}}').join(scaffold.workspaceCwd)
+    .split('{{cwd}}').join(serializedCwd)
   const fixtureCwd = (JSON.parse(realized.split('\n', 1)[0]!) as { cwd?: string }).cwd
   return fixtureCwd === undefined
     ? realized
-    : realized.split(fixtureCwd).join(scaffold.workspaceCwd)
+    : realized.split(JSON.stringify(fixtureCwd).slice(1, -1)).join(serializedCwd)
 }
 
 export async function seedSession(
@@ -789,9 +914,29 @@ async function persistSeedSession(
 function normalizeAria(snapshot: string, workspaceCwd: string): string {
   // The session heading renders the workspace's basename, not the full
   // path, so both spellings must collapse to the token.
-  const base = workspaceCwd.split('/').pop()!
+  const base = basename(workspaceCwd)
+  const escapedBase = base.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+  const forwardCwd = workspaceCwd.replaceAll('\\', '/')
+  const backwardCwd = workspaceCwd.replaceAll('/', '\\')
+  const cwdPattern = new RegExp(
+    workspaceCwd
+      .split(/[\\/]+/u)
+      .filter(Boolean)
+      .map(segment => segment.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'))
+      .join('[\\\\/]+'),
+    'giu',
+  )
+  const windowsWorkspacePattern = new RegExp(
+    `[\\\\?]*[A-Za-z]:[\\\\/]+(?:[^\\\\/\\r\\n"]+[\\\\/]+)*${escapedBase}`,
+    'giu',
+  )
   return snapshot
+    .replace(cwdPattern, '{{cwd}}')
+    .replace(windowsWorkspacePattern, '{{cwd}}')
     .split(workspaceCwd).join('{{cwd}}')
+    .split(forwardCwd).join('{{cwd}}')
+    .split(backwardCwd).join('{{cwd}}')
+    .replace(/\{\{cwd\}\}(?:\\+[^\\\s"]+)+/gu, value => value.replace(/\\+/gu, '/'))
     .split(base).join('{{workspace}}')
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '{{uuid}}')
     // The optional space in `\d+m ?\d+s` covers both minute spellings: the

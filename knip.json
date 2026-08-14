@@ -710,6 +710,7 @@
         "tests/**/*.perf.ts",
         "tests/**/*.snapshot.ts",
         "tests/support.ts",
+        "tests/windows-posix-runner.ts",
         "src/node-module-stub.ts"
       ],
       "project": [
@@ -738,6 +739,61 @@
       ],
       "ignoreDependencies": [
         "@deepseek-ai/.+"
+      ]
+    },
+    "apps/desktop": {
+      "entry": [
+        "src/main.ts",
+        "src/harness-worker.ts",
+        "src/preload.ts",
+        "tests/**/*.spec.ts",
+        "e2e/**/*.e2e.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "tests/**/*.ts",
+        "e2e/**/*.ts"
+      ],
+      "ignoreDependencies": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "@dsh-anime/bundle-desktop"
+      ]
+    },
+    "packages/bundle/anime-desktop": {
+      "project": [
+        "src/**/*.ts"
+      ],
+      "ignoreDependencies": [
+        "@dsh-anime/client-character",
+        "@dsh-anime/client-shell"
+      ]
+    },
+    "packages/client/anime-character": {
+      "entry": [
+        "tests/**/*.spec.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tests/**/*.ts"
+      ],
+      "ignoreDependencies": [
+        "@testing-library/react"
+      ]
+    },
+    "packages/client/anime-shell": {
+      "entry": [
+        "tests/**/*.spec.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tests/**/*.ts"
+      ],
+      "ignoreDependencies": [
+        "@testing-library/react",
+        "react-dom"
       ]
     },
     "packages/client/modules": {

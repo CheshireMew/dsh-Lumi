@@ -8,6 +8,8 @@ One `MessageFeedbackController` per Session backs every message control in that 
 
 Mutations go through `ctx.remote.messageFeedback`; the Host owns per-item compare-and-set. Every `put` and `delete` carries the `version` this controller last observed, and a `version-conflict` reply carries the authoritative item, so a lost race reconciles from the reply itself instead of refetching the Session. Mutations serialize per Session, so a queued operation always compares against the committed version. Re-clicking the recorded rating retracts the feedback; switching sides carries the existing note forward.
 
+After the Host accepts a rating transition, the browser plugin emits `message-feedback/change` with the Session id, message id, and durable before/after ratings. Optional presentation plugins may react to that event; failed or no-op mutations emit nothing.
+
 The `/client` exports are the plugin body (`apply`/`inject`), the `MessageFeedbackActions` component, the `MessageFeedbackController` class, and the injected face types.
 
 ## Model Experience

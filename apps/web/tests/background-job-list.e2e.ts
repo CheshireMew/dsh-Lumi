@@ -22,7 +22,9 @@ import { newEnglishPage, saveFailureShot } from './support.ts'
 const FIXTURE = fileURLToPath(new URL('./snapshots/fresh-round-trip/session.jsonl', import.meta.url))
 const SNAPSHOT_DIR = fileURLToPath(new URL('./snapshots/background-job-list', import.meta.url))
 const RUNNING_EXPECTED = join(SNAPSHOT_DIR, 'running.expected.md')
-const SETTLED_EXPECTED = join(SNAPSHOT_DIR, 'settled.expected.md')
+const SETTLED_EXPECTED = join(SNAPSHOT_DIR, process.platform === 'win32'
+  ? 'settled.windows.expected.md'
+  : 'settled.expected.md')
 const MODE = webSnapshotMode()
 const SEED_ID = 'background-job-list-web-e2e'
 // Long enough that the running assertions never race the process exiting on
@@ -118,7 +120,7 @@ describe.skipIf(MODE === 'record')('web e2e: background job list', () => {
 
     // The trigger drops its live count once the task leaves running/stopping,
     // which is also the proof that settlement reached the browser unprompted.
-    const idle = page.getByRole('button', { name: '1 background job' })
+    const idle = page.getByRole('button', { name: '1 background job', exact: true })
     await idle.waitFor({ timeout: 20_000 })
 
     const snapshot = await captureStableAria(page, '[class*="menu"]', scaffold.workspaceCwd)
@@ -128,6 +130,8 @@ describe.skipIf(MODE === 'record')('web e2e: background job list', () => {
   }, 60_000)
 
   it('keeps its snapshot inventory closed', async () => {
-    await assertFixtureInventory(SNAPSHOT_DIR, ['running.expected.md', 'settled.expected.md'])
+    await assertFixtureInventory(SNAPSHOT_DIR, [
+      'running.expected.md', 'settled.expected.md', 'settled.windows.expected.md',
+    ])
   })
 })

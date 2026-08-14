@@ -1,0 +1,9 @@
+# Product layer over @deepseek-ai/dsh-web-app. These are additive browser
+# plugins: character owns packs/settings/TTS/progression; shell only replaces
+# layout.frame and falls back to the official AppFrame when unloaded.
+- insert:
+    - id: anime-character
+      name: '@dsh-anime/client-character'
+
+    - id: anime-shell
+      name: '@dsh-anime/client-shell'

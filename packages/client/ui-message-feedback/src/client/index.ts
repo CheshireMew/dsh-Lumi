@@ -8,6 +8,8 @@
  */
 
 import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { MessageId } from '@deepseek-ai/dsh-client-connection/client'
+import type { MessageFeedbackRating } from '@deepseek-ai/dsh-message-feedback/types'
 // Type-only: pulls the generated Remote API and ctx.remote merge through the Client assembly boundary.
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 // Type-only: pulls the ui-conversation SlotMap merge (the assistant-actions entry).
@@ -24,6 +26,25 @@ export type {
 } from './controller.ts'
 export type { MessageFeedbackActionProps, MessageFeedbackInjected } from './slots.ts'
 export type { MessageFeedbackKey } from './locales.ts'
+
+/** Successful durable rating transition emitted for optional product reactions. */
+export interface MessageFeedbackChange {
+  sessionId: SessionId
+  messageId: MessageId
+  before: MessageFeedbackRating | undefined
+  after: MessageFeedbackRating | undefined
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * A message rating changed after the Host accepted the mutation.
+     * @mode emit
+     * @param change - durable before/after rating transition.
+     */
+    'message-feedback/change'(change: MessageFeedbackChange): void
+  }
+}
 
 /** Dictionary namespace owned by this plugin. */
 const NS = 'feedback'
@@ -65,13 +86,27 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: (sessionId): MessageFeedbackInjected => {
         const controller = controllerFor(sessionId)
+        const transition = async (
+          messageId: MessageId,
+          operation: () => ReturnType<MessageFeedbackController['rate']>,
+        ) => {
+          const before = controller.getSnapshot().items.get(messageId)?.rating
+          const result = await operation()
+          const after = controller.getSnapshot().items.get(messageId)?.rating
+          if (result.ok && before !== after) {
+            ctx.emit('message-feedback/change', { sessionId, messageId, before, after })
+          }
+          return result
+        }
         return {
           hooks: { feedback: controller },
           ensure: () => controller.ensure(),
-          rate: (messageId, rating, note) => controller.rate(messageId, rating, note),
-          toggle: (messageId, rating) => controller.toggle(messageId, rating),
+          rate: (messageId, rating, note) =>
+            transition(messageId, () => controller.rate(messageId, rating, note)),
+          toggle: (messageId, rating) =>
+            transition(messageId, () => controller.toggle(messageId, rating)),
           clearNote: messageId => controller.clearNote(messageId),
-          clear: messageId => controller.clear(messageId),
+          clear: messageId => transition(messageId, () => controller.clear(messageId)),
         }
       },
     }, MessageFeedbackActions)

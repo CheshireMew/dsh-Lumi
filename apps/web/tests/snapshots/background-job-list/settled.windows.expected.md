@@ -1,0 +1,2 @@
+- list "Background jobs":
+  - listitem: bash sleep 45 killed before exit {{duration}}

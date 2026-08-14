@@ -6,6 +6,7 @@
  * @module @deepseek-ai/dsh-app-boot
  */
 
+import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { readFileSync } from 'node:fs'
 import { parseEnv } from 'node:util'
@@ -494,11 +495,19 @@ export async function mountRootInclude(
     : class HostResolvedRootInclude extends Include {
       override import(name: string, getOuterStack?: () => string[]): unknown {
         const specifier = isAbsolute(name) ? pathToFileURL(name).href : name
-        if (name.startsWith('.') || name.startsWith('cordis:')) return super.import(specifier, getOuterStack)
+        if (isAbsolute(name) || name.startsWith('.') || name.startsWith('cordis:')) {
+          return super.import(specifier, getOuterStack)
+        }
         const internal = this.ctx.loader.internal
         /* v8 ignore next -- Node supplies the internal loader; this preserves the
            original diagnostic for hypothetical embedders without it. */
-        if (internal === undefined) return super.import(specifier, getOuterStack)
+        if (internal === undefined) {
+          // Electron utility processes intentionally expose less of Node's
+          // internal ESM loader. Resolve from the explicit host/profile base
+          // with the public resolver, then import the concrete file URL.
+          const resolved = createRequire(bareModuleBaseUrl).resolve(specifier)
+          return import(pathToFileURL(resolved).href)
+        }
         return internal.import(specifier, bareModuleBaseUrl, {})
       }
     }
@@ -770,6 +779,19 @@ export async function boot(
     ctx.provide('dshHomePath', dshHomePath)
     await ctx.plugin(Loader)
     await prepare?.(ctx)
+    if (bareModuleBaseUrl !== undefined && ctx.loader.internal === undefined) {
+      const importUnknown = async (url: string): Promise<unknown> => {
+        const module: unknown = await import(url)
+        return module
+      }
+      ctx.loader.importModule = async (specifier, parentURL) => {
+        if (specifier.startsWith('node:') || specifier.startsWith('file:')) return importUnknown(specifier)
+        if (isAbsolute(specifier)) return importUnknown(pathToFileURL(specifier).href)
+        if (specifier.startsWith('.')) return importUnknown(new URL(specifier, parentURL).href)
+        const resolved = createRequire(bareModuleBaseUrl).resolve(specifier)
+        return importUnknown(pathToFileURL(resolved).href)
+      }
+    }
     stage = 'plugin tree failed to load'
     await mountRootInclude(ctx, absoluteConfigPath, patches, bareModuleBaseUrl)
     // A surface can finish and dispose the whole tree while startup is still

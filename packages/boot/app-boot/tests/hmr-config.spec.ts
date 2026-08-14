@@ -9,10 +9,11 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Timer from '@deepseek-ai/cordis-plugin-timer'
 import { describe, expect, it, vi } from 'vitest'
 
-async function bootHmr(dir: string, root: string[] = [], usePolling?: boolean): Promise<Context> {
+async function bootHmr(dir: string, root: string[] = [], usePolling?: boolean, publicOnly = false): Promise<Context> {
   const ctx = new Context()
   ctx.baseUrl = pathToFileURL(dir).href + '/'
   await ctx.plugin(Loader)
+  if (publicOnly) ctx.loader.internal = undefined
   await ctx.plugin(Timer)
   await ctx.plugin(Hmr, {
     root,
@@ -86,7 +87,7 @@ describe('HMR exact config paths', () => {
   it('observes add, change, and unlink outside its module roots', { timeout: 20_000 }, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-hmr-config-'))
     const filename = join(dir, 'plugins.yml')
-    const ctx = await bootHmr(dir)
+    const ctx = await bootHmr(dir, [], undefined, true)
     const observed: string[] = []
     try {
       await ctx.hmr.registerConfig(filename, () => {

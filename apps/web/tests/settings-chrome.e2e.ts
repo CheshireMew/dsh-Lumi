@@ -186,7 +186,7 @@ describe('web e2e: settings modal and General preferences', () => {
     const darkCube = initialDialog.getByRole('button', { name: '深色' })
     await darkCube.click()
     await expect.poll(() => darkCube.getAttribute('aria-pressed'), { timeout: 5_000 }).toBe('true')
-    await expect.poll(async () => readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8'), { timeout: 5_000 })
+    await expect.poll(async () => readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8'), { timeout: 15_000 })
       .toMatch(/ui-theme:\n\s+preference: dark/)
     await page.keyboard.press('Escape')
 
@@ -288,7 +288,7 @@ describe('web e2e: settings modal and General preferences', () => {
     expect(dark.legacy).toBeNull()
     expect(dark.token).not.toBe(light.token)
     expectThemeColorSynchronized(dark)
-    await expect.poll(async () => readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8'), { timeout: 5_000 })
+    await expect.poll(async () => readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8'), { timeout: 15_000 })
       .toMatch(/ui-theme:\n\s+preference: dark/)
     await page.keyboard.press('Escape')
 

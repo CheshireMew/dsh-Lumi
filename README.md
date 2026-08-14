@@ -34,6 +34,14 @@ pnpm run build
 pnpm dsh web
 ```
 
+## Anime desktop variant
+
+This repository also contains an additive Electron desktop experience with an anime character shell. It keeps the official Harness profile, sessions, plugins, and Web UI as the product core. See the [anime desktop guide](docs/user/guide/anime-desktop.md).
+
+```sh
+pnpm run dev:anime
+```
+
 ## Community and support
 
 - Feel free to submit feedback or bug reports through [GitHub Discussions](https://github.com/deepseek-ai/deepseek-harness/discussions).

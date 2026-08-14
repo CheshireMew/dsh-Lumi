@@ -3,7 +3,8 @@
 import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { createRequire } from 'node:module'
 import { chromium } from 'playwright'
 import { expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -89,7 +90,10 @@ it('hot-reloads a real client-plugin source edit without refreshing the page', a
   const failures: unknown[] = []
   try {
     subprocessFiber = await subprocessCtx.plugin(LocalSubprocessRuntime)
-    watcher = subprocessCtx.subprocess.spawn(spawnSpec(['pnpm', 'run', 'dev:web'], REPO_ROOT))
+    const packageEntrypoint = createRequire(import.meta.url).resolve('pnpm')
+    const pnpmEntrypoint = process.env.npm_execpath || join(dirname(packageEntrypoint), 'bin', 'pnpm.mjs')
+    watcher = subprocessCtx.subprocess.spawn(spawnSpec(
+      [process.execPath, pnpmEntrypoint, 'run', 'dev:web'], REPO_ROOT))
     await waitForOutput(watcher, /dev-web: watching/, 'pnpm run dev:web')
     host = subprocessCtx.subprocess.spawn(spawnSpec(
       [process.execPath, binPath, 'web', '--port', '0'],
@@ -101,10 +105,11 @@ it('hot-reloads a real client-plugin source edit without refreshing the page', a
     ))
     const baseUrl = await waitForOutput(host, /dsh web: (http:\/\/[^\s]+)/, 'built dsh web')
     browser = await chromium.launch()
-    const page = await browser.newPage()
+    const page = await browser.newPage({ locale: 'en-US' })
     const pageErrors: string[] = []
     page.on('pageerror', error => pageErrors.push(String(error)))
     await page.goto(baseUrl, { waitUntil: 'load' })
+    await page.getByRole('button', { name: 'Continue', exact: true }).click({ timeout: 15_000 })
     await page.getByText(oldText, { exact: true }).waitFor({ timeout: 15_000 })
     const pageIdentity = await page.evaluate(() => {
       const identity = crypto.randomUUID()

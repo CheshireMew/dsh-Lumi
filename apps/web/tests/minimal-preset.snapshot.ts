@@ -95,14 +95,28 @@ describe('minimal agent preset', () => {
       .map(block => block.text)
       .join('')
       .replaceAll(scaffold.workspaceCwd, '{{cwd}}')
+      .replaceAll('\\', '/')
+      .replace(/^\s+(?=\d+\s)/gmu, '   ')
       .trimEnd()
 
-    expect({
+    const observed = {
       prompt: requestHeader.system,
       tools: requestHeader.tools?.map(tool => tool.name),
       bash: text(bash),
       editor: text(editor),
-    }).toMatchInlineSnapshot(`
+    }
+    if (process.platform === 'win32') {
+      // The shipped persistent terminal provider deliberately has no Windows
+      // process inspector. Keep the preset/schema smoke active and assert that
+      // explicit platform result instead of pretending the POSIX terminal ran.
+      expect(observed).toEqual({
+        bash: 'Error: subprocess-local: terminal inspection is unsupported on platform win32',
+        editor: "Here's the content of {{cwd}}/preset-smoke.txt with line numbers (which has a total of 2 lines):\n   1  MINIMAL_EDITOR_OK\n   2",
+        prompt: 'You are a helpful software engineer assistant.',
+        tools: ['bash', 'str_replace_editor'],
+      })
+    } else {
+      expect(observed).toMatchInlineSnapshot(`
       {
         "bash": "PERSISTED:{{cwd}}/persistent-state",
         "editor": "Here's the content of {{cwd}}/preset-smoke.txt with line numbers (which has a total of 2 lines):
@@ -115,6 +129,7 @@ describe('minimal agent preset', () => {
         ],
       }
     `)
+    }
     expect(requestHeader.tools?.toSorted((left, right) => left.name.localeCompare(right.name)))
       .toEqual(scaffold.ctx.tools.schemas(agentHandle.agent).toSorted((left, right) => left.name.localeCompare(right.name)))
     await assertFixtureInventory(SNAPSHOT_DIR, ['session.jsonl'])

@@ -280,6 +280,19 @@ describe('Node 24 lane ownership', () => {
   })
 })
 
+describe('local gate concurrency', () => {
+  it('serializes Windows check-all while retaining the ordinary local cap elsewhere', () => {
+    expect(defaultConcurrency('check-all', 20, 16, 'win32')).toEqual({
+      workers: 1,
+      source: 'Windows check-all process-isolation cap 1',
+    })
+    expect(defaultConcurrency('check-all', 20, 16, 'linux')).toEqual({
+      workers: 4,
+      source: '16 available CPU(s), check-all cap 4',
+    })
+  })
+})
+
 describe('Linux primary graph', () => {
   it('adds the same compare-only web gate after built client artifacts', () => {
     const subject = withPnpmEntrypoint(() => gatesForMode('ci-linux-primary'))

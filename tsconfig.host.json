@@ -9,6 +9,9 @@
   },
   "include": [
     "apps/web/tests/scaffold.ts",
+    "apps/web/tests/approval-composer.support.ts",
+    "apps/web/tests/anime-visual-matrix.e2e.ts",
+    "apps/web/tests/windows-posix-runner.ts",
     "apps/web/tests/default-model.e2e.ts",
     "apps/web/tests/declared-reasoning.e2e.ts",
     "apps/web/tests/support.ts",
@@ -242,6 +245,7 @@
     { "path": "./packages/bundle/base" },
     { "path": "./packages/bundle/headless" },
     { "path": "./packages/bundle/web-app" },
+    { "path": "./packages/bundle/anime-desktop" },
     { "path": "./packages/boot/app-boot" },
     { "path": "./packages/boot/cmdline" },
     { "path": "./packages/sdk/server" },

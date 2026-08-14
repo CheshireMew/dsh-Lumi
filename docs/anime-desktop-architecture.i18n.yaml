@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/anime-desktop-architecture.md
+anime-desktop-architecture.md: f960d9f9b6e3e041de85760151d69918f74615a1
+anime-desktop-architecture.zh.md: bcfcc48e64664cf975313891d54591aac4844994
