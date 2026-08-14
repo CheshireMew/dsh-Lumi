@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/anime-desktop-architecture.md
-anime-desktop-architecture.md: 3d28f5621058ca575973fbce03bb491fbe97d1c0
-anime-desktop-architecture.zh.md: 92fe842ce0ccfa7f3fc35963d2e0233bd8b722e5
+anime-desktop-architecture.md: d60363cf75ded387efcb3b6b29617a14de448dfc
+anime-desktop-architecture.zh.md: 878282e3097c98ecbc46c9ab8d1d702a5b4dfc61

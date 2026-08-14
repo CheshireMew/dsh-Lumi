@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-14-anime-electron-product-layer.md
-2026-08-14-anime-electron-product-layer.md: 2893c42af7fa6e5f836d0b8b523d17b702adfe32
-2026-08-14-anime-electron-product-layer.zh.md: 5a1ad3f1cb3047ffec20a0e05ac8ef3fc0a427ee
+2026-08-14-anime-electron-product-layer.md: fa800ad7892aa8916c8b9e7dc0189086aaf10748
+2026-08-14-anime-electron-product-layer.zh.md: 004adcc2ebb4f95b09c3ed3ccb9902ca3372b9c3

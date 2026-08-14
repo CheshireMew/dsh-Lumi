@@ -11,7 +11,7 @@ interface UpstreamConfig {
   highConflictFiles: string[]
 }
 
-interface CheckResult {
+export interface CheckResult {
   name: string
   command: string
   passed: boolean
@@ -74,6 +74,21 @@ function localDate(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
+/**
+ * Select the synchronization branch, preserving an in-progress branch across
+ * a local-date change when it targets the same official commit.
+ * @param startingBranch - branch from which synchronization was invoked.
+ * @param date - local report date in YYYY-MM-DD form.
+ * @param nextBase - official commit being synchronized.
+ * @returns the existing resumable branch or today's new branch name.
+ */
+export function selectSynchronizationBranch(startingBranch: string, date: string, nextBase: string): string {
+  const basePrefix = nextBase.slice(0, 8)
+  const resumable = /^codex\/sync-\d{8}-([0-9a-f]{8})$/u.exec(startingBranch)
+  if (resumable?.[1] === basePrefix) return startingBranch
+  return `codex/sync-${date.replaceAll('-', '')}-${basePrefix}`
+}
+
 function runCheck(name: string, args: string[], extraEnv: NodeJS.ProcessEnv = {}): CheckResult {
   const command = `pnpm ${args.join(' ')}`
   const pnpmEntry = process.env.npm_execpath
@@ -90,7 +105,8 @@ function runCheck(name: string, args: string[], extraEnv: NodeJS.ProcessEnv = {}
   return { name, command, passed: result.status === 0 }
 }
 
-function writeSyncReport(
+/** Render one synchronization report with exactly one trailing newline. */
+export function renderSyncReport(
   date: string,
   branch: string,
   previousBase: string,
@@ -99,9 +115,6 @@ function writeSyncReport(
   touchedSeams: string[],
   checks: readonly CheckResult[],
 ): string {
-  const reports = resolve(root, 'docs', 'upstream-sync')
-  mkdirSync(reports, { recursive: true })
-  const path = resolve(reports, `${date}.md`)
   const lines = [
     `# Upstream sync ${date}`,
     '',
@@ -126,9 +139,23 @@ function writeSyncReport(
     '- Open the official Web profile without the Anime bundle and compare the default frame.',
     '- Open scene and work modes in the Anime profile and inspect sidebar, conversation, details, and overlays.',
     '- Complete the Windows real-model workflow documented in the Anime desktop user guide.',
-    '',
   ]
-  writeFileSync(path, `${lines.join('\n')}\n`, 'utf8')
+  return `${lines.join('\n')}\n`
+}
+
+function writeSyncReport(
+  date: string,
+  branch: string,
+  previousBase: string,
+  nextBase: string,
+  changes: string[],
+  touchedSeams: string[],
+  checks: readonly CheckResult[],
+): string {
+  const reports = resolve(root, 'docs', 'upstream-sync')
+  mkdirSync(reports, { recursive: true })
+  const path = resolve(reports, `${date}.md`)
+  writeFileSync(path, renderSyncReport(date, branch, previousBase, nextBase, changes, touchedSeams, checks), 'utf8')
   return path
 }
 
@@ -161,7 +188,7 @@ function synchronize(): void {
   git(['merge', '--ff-only', target], true)
   const nextBase = git(['rev-parse', target])
   const date = localDate()
-  const branch = `codex/sync-${date.replaceAll('-', '')}-${nextBase.slice(0, 8)}`
+  const branch = selectSynchronizationBranch(startingBranch, date, nextBase)
   const existingBranch = gitSucceeds(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])
   if (existingBranch && startingBranch !== branch) {
     throw new Error(`sync branch already exists: ${branch}; switch to it to resume the preserved synchronization`)
@@ -200,26 +227,30 @@ function synchronize(): void {
   process.exit(1)
 }
 
-const args = new Set(process.argv.slice(2))
-const supported = new Set(['--fetch', '--rebase', '--sync', '--help'])
-for (const arg of args) if (!supported.has(arg)) throw new Error(`unknown argument: ${arg}`)
-if (args.has('--help')) {
-  console.log('Usage: pnpm run upstream:status | upstream:fetch | upstream:rebase | sync:upstream')
-  process.exit(0)
-}
-if ([...args].filter(arg => arg !== '--help').length > 1) throw new Error('choose only one synchronization operation')
-
-assertOfficialRemote()
-if (args.has('--sync')) synchronize()
-else {
-  if (args.has('--rebase')) assertRebaseReady()
-  if (args.has('--fetch') || args.has('--rebase')) git(['fetch', '--prune', '--tags', config.remote, config.branch], true)
-  if (args.has('--rebase')) {
-    const result = spawnSync('git', ['rebase', target], { cwd: root, encoding: 'utf8', shell: false, stdio: 'inherit' })
-    if (result.status !== 0) {
-      console.error('Rebase stopped. Resolve conflicts, run focused checks, then continue or abort the rebase explicitly.')
-      process.exit(result.status ?? 1)
-    }
+function main(argv: string[]): void {
+  const args = new Set(argv)
+  const supported = new Set(['--fetch', '--rebase', '--sync', '--help'])
+  for (const arg of args) if (!supported.has(arg)) throw new Error(`unknown argument: ${arg}`)
+  if (args.has('--help')) {
+    console.log('Usage: pnpm run upstream:status | upstream:fetch | upstream:rebase | sync:upstream')
+    return
   }
-  printStatus()
+  if ([...args].filter(arg => arg !== '--help').length > 1) throw new Error('choose only one synchronization operation')
+
+  assertOfficialRemote()
+  if (args.has('--sync')) synchronize()
+  else {
+    if (args.has('--rebase')) assertRebaseReady()
+    if (args.has('--fetch') || args.has('--rebase')) git(['fetch', '--prune', '--tags', config.remote, config.branch], true)
+    if (args.has('--rebase')) {
+      const result = spawnSync('git', ['rebase', target], { cwd: root, encoding: 'utf8', shell: false, stdio: 'inherit' })
+      if (result.status !== 0) {
+        console.error('Rebase stopped. Resolve conflicts, run focused checks, then continue or abort the rebase explicitly.')
+        process.exit(result.status ?? 1)
+      }
+    }
+    printStatus()
+  }
 }
+
+if (process.argv[1] !== undefined && import.meta.filename === resolve(process.argv[1])) main(process.argv.slice(2))

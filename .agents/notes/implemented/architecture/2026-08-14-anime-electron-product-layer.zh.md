@@ -26,7 +26,7 @@ Electron utility process 的 Node 运行时不会暴露 Cordis Loader 使用的 
 
 ## 上游维护
 
-官方仓库是只能拉取的 `upstream` remote，`upstream-base` 只快进到 `upstream/master`，稳定产品代码位于 `main`，Git `rerere` 记录重复冲突的解决结果。`.upstream.json` 记录官方目标、已验收提交和高冲突路径。受保护的同步命令会拒绝脏工作区，从 `main` 创建 `codex/sync-YYYYMMDD-<sha>`，合并 `upstream-base`，保留冲突和门禁失败现场，运行产品与官方门禁，并记录带日期的报告。已提交的修复只能从这个同步分支原地续验。只有全部成功时才会推进已验收记录。官方组合包配置项保持不变；二次元组合包是产品配置项的完整差异。
+官方仓库是只能拉取的 `upstream` remote，`upstream-base` 只快进到 `upstream/master`，稳定产品代码位于 `main`，Git `rerere` 记录重复冲突的解决结果。`.upstream.json` 记录官方目标、已验收提交和高冲突路径。受保护的同步命令会拒绝脏工作区，从 `main` 创建 `codex/sync-YYYYMMDD-<sha>`，合并 `upstream-base`，保留冲突和门禁失败现场，运行产品与官方门禁，并记录只有一个末尾换行的带日期报告。已提交的修复只能从这个同步分支原地续验，本地日期变化后仍然如此。只有全部成功时才会推进已验收记录。官方组合包配置项保持不变；二次元组合包是产品配置项的完整差异。
 
 Windows 通过 Git for Windows Bash 和仅用于测试的直通 runner 执行标准 POSIX 录制 Web 回放语料，所有命令都位于新建的临时工作区。测试 scaffold 只在复制的预设目录中选择 Bash，为原生 Python 映射 fixture 的 `/tmp` 路径，在快照中归一化平台路径，并在结束时恢复环境。原生 Windows 验收场景会退出这条兼容路径，继续使用 PowerShell 和 ACL runner。发布的预设、产品 shell 选择和产品隔离行为均不受影响。
 

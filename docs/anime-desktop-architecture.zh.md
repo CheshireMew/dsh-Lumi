@@ -51,7 +51,7 @@ pnpm run upstream:status
 pnpm run sync:upstream
 ```
 
-`upstream:status` 只读。`sync:upstream` 会拒绝有未提交改动的工作区，获取官方提交和 tags，把 `upstream-base` 快进到最新官方提交，返回 `main`，创建 `codex/sync-YYYYMMDD-<sha>`，再合并 `upstream-base`。遇到冲突或门禁失败时会保留同步分支与工作现场。在这个分支上提交修复后，可以再次运行命令并原地续验；若同名分支已存在，则不能从其他分支恢复它。合并成功后依次运行 Anime 契约与构建、官方 GUI 与 Web replay、仓库检查和已构建 Electron 测试。脚本总会写入 `docs/upstream-sync/<date>.md`；只有全部成功时才更新 `.upstream.json` 和 `UPSTREAM_BASE.md`。Git `rerere` 已启用，可以复用重复出现的冲突解决结果。
+`upstream:status` 只读。`sync:upstream` 会拒绝有未提交改动的工作区，获取官方提交和 tags，把 `upstream-base` 快进到最新官方提交，返回 `main`，创建 `codex/sync-YYYYMMDD-<sha>`，再合并 `upstream-base`。遇到冲突或门禁失败时会保留同步分支与工作现场。在这个分支上提交修复后，即使本地日期已经变化，也可以再次运行命令并原地续验；若同名分支已存在，则不能从其他分支恢复它。合并成功后依次运行 Anime 契约与构建、官方 GUI 与 Web replay、仓库检查和已构建 Electron 测试。脚本总会写入只有一个末尾换行的 `docs/upstream-sync/<date>.md`；只有全部成功时才更新 `.upstream.json` 和 `UPSTREAM_BASE.md`。Git `rerere` 已启用，可以复用重复出现的冲突解决结果。
 
 解决源码冲突时，先保留上游意图，再重新应用少量产品扩展。不要把官方组合包配置项复制进二次元组合包。`pnpm-lock.yaml` 无法机械解决冲突时，应运行 `pnpm install` 重新生成，而不是手工拼接依赖记录。报告会列出官方提交、上游触及的受监视接缝、自动化结果，以及仍需人工执行的官方 Web、Anime 和真实模型检查。
 
