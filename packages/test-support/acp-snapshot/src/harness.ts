@@ -576,16 +576,32 @@ async function waitForPersistedChildTurnEnd(
   timeoutMs = DEFAULT_WAIT_TIMEOUT_MS,
   minimumTurn = 1,
 ): Promise<void> {
-  await vi.waitFor(async () => {
-    const log = (await harvestSessionLogs(root))[child]
-    if (log === undefined || !latestTurnIsClosed(log.content)
-      || !hasRequestHeaderAfterDescriptor(log.content)
-      || !hasClosedTurn(log.content, minimumTurn)) {
-      throw new Error(
-        `snapshot-harness: subagent child #${child} did not persist closed turn ${minimumTurn} within ${timeoutMs}ms`,
-      )
+  const timeoutError = new Error(
+    `snapshot-harness: subagent child #${child} did not persist closed turn ${minimumTurn} within ${timeoutMs}ms`,
+  )
+  let lastPollError: Error | undefined
+  try {
+    await vi.waitFor(async () => {
+      try {
+        const log = (await harvestSessionLogs(root))[child]
+        if (log === undefined || !latestTurnIsClosed(log.content)
+          || !hasRequestHeaderAfterDescriptor(log.content)
+          || !hasClosedTurn(log.content, minimumTurn)) {
+          throw timeoutError
+        }
+      } catch (error) {
+        lastPollError = error instanceof Error
+          ? error
+          : new Error('snapshot-harness: child persistence poll failed with a non-Error value', { cause: error })
+        throw lastPollError
+      }
+    }, { interval: WAIT_POLL_INTERVAL_MS, timeout: timeoutMs })
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Timed out in waitFor!') {
+      throw lastPollError ?? timeoutError
     }
-  }, { interval: WAIT_POLL_INTERVAL_MS, timeout: timeoutMs })
+    throw error
+  }
 }
 
 /** Whether a raw session log contains the requested closed turn. */

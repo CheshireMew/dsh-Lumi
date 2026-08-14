@@ -8,6 +8,13 @@
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "22.23.2",
+      "onFail": "download"
+    }
+  },
   "workspaces": [
     "vendor/*",
     "packages/*/*",
@@ -44,7 +51,7 @@
     "lint:fix": "npm run build:lib:host && npm run lint:fix:contracts-ready",
     "lint:fix:contracts-ready": "tsx scripts/run-oxlint.ts --config .oxlintrc.staged.json packages/typert/generator/tests/fixtures/type-model --fix && tsx scripts/run-oxlint.ts . --fix",
     "duplication": "jscpd --config .jscpd.json packages scripts",
-    "test": "vitest run",
+    "test": "tsx scripts/run-unit-tests.ts",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:issue-management": "node .github/issue-management/policy.test.mjs",

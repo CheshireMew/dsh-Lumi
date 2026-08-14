@@ -89,10 +89,11 @@ const testIncludes = [
   'scripts/**/*.spec.ts',
 ]
 
-// Fork-heavy Git, compiler, and subprocess suites saturate Windows process
-// creation well before the host's logical CPU count. Four workers keep their
-// existing deadlines meaningful without changing Linux or CI scheduling.
-const windowsMaxWorkers = process.platform === 'win32' ? 4 : undefined
+// Fork-heavy Git, compiler, real-CLI, and subprocess suites saturate Windows
+// process creation well before the host's logical CPU count. One worker per
+// sequential Windows shard avoids fork collisions; run-unit-tests
+// bounds each Vitest process's lifetime. Linux and CI scheduling is unchanged.
+const windowsMaxWorkers = process.platform === 'win32' ? 1 : undefined
 
 // The instrumented coverage gate sets this env; the exempt heavy suites then
 // run beside it uninstrumented (membership contract in scripts/coverage-exempt.ts).

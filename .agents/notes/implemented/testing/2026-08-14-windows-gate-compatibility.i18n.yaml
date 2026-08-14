@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/testing/2026-08-14-windows-gate-compatibility.md
-2026-08-14-windows-gate-compatibility.md: 9f8b8146a7bf6d39920c74503edc080eb390cfff
-2026-08-14-windows-gate-compatibility.zh.md: 5f5023d73ec20e21e04765c0f2109b49dec748c2
+2026-08-14-windows-gate-compatibility.md: 402434c3d2038952ac21ba4151a97434139b7af0
+2026-08-14-windows-gate-compatibility.zh.md: 4f46d5b61532a987c2eadd84f056544b76e2f417

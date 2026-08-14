@@ -339,6 +339,26 @@ export interface LaunchOptions {
   harnessHome?: string
 }
 
+// Chromium applies the Fetch bad-port list before it attempts a network
+// connection. An OS-assigned port can therefore be bound successfully while
+// every browser navigation to it is rejected with ERR_UNSAFE_PORT.
+const CHROMIUM_BLOCKED_PORTS = new Set([
+  1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79,
+  87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137,
+  139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532, 540,
+  548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720, 1723, 2049,
+  3659, 4045, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6697, 10080,
+])
+
+/**
+ * Check whether Chromium will navigate to a TCP port selected by the scaffold.
+ * @param port - bound loopback TCP port.
+ * @returns true when the port is valid and absent from Chromium's blocked list.
+ */
+export function isChromiumNavigablePort(port: number): boolean {
+  return Number.isInteger(port) && port >= 1 && port <= 65_535 && !CHROMIUM_BLOCKED_PORTS.has(port)
+}
+
 /** Dispose the booted tree and remove both owned temp roots, reporting every independent cleanup failure. */
 async function cleanupScaffoldWorld(ctx: Context, workspaceCwd: string, persistenceRoot: string): Promise<unknown[]> {
   const failures: unknown[] = []
@@ -354,6 +374,10 @@ async function cleanupScaffoldWorld(ctx: Context, workspaceCwd: string, persiste
  * @returns the running scaffold.
  */
 export async function launchWebScaffold(options: LaunchOptions = {}): Promise<WebScaffold> {
+  return launchWebScaffoldAttempt(options, 8)
+}
+
+async function launchWebScaffoldAttempt(options: LaunchOptions, remainingAttempts: number): Promise<WebScaffold> {
   requireDist()
   const mode = webSnapshotMode()
   const browserHost = options.remoteAuthority ?? '127.0.0.1'
@@ -661,6 +685,20 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       throw new Error('web e2e scaffold: webServer service missing after settled boot')
     }
     port = boundPort
+    if (!isChromiumNavigablePort(port)) {
+      if (process.cwd() !== originalCwd) process.chdir(originalCwd)
+      const cleanupFailures = await cleanupScaffoldWorld(ctx, workspaceCwd, persistenceRoot)
+      restoreCredentialEnvironment()
+      restoreSkillRootEnvironment()
+      restoreShellEnvironment()
+      if (cleanupFailures.length > 0) {
+        throw new AggregateError(cleanupFailures, `web scaffold rejected Chromium-blocked port ${String(port)} and cleanup was incomplete`)
+      }
+      if (remainingAttempts <= 1) {
+        throw new Error(`web scaffold received Chromium-blocked ports for all 8 attempts; last port ${String(port)}`)
+      }
+      return await launchWebScaffoldAttempt(options, remainingAttempts - 1)
+    }
 
     // Fill the open llm seam on the settled root ctx. Ordinary keyless modes
     // disable llm-deepseek; the first-run lane keeps it mounted but has no

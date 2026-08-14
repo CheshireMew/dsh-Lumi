@@ -5,7 +5,15 @@ import { expect, it } from 'vitest'
 import type {} from '@deepseek-ai/dsh-skill'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent-presets'
-import { launchWebScaffold, type WebScaffold } from './scaffold.ts'
+import { isChromiumNavigablePort, launchWebScaffold, type WebScaffold } from './scaffold.ts'
+
+it('rejects Chromium-blocked ports before a browser opens the scaffold', () => {
+  expect(isChromiumNavigablePort(4045)).toBe(false)
+  expect(isChromiumNavigablePort(10_080)).toBe(false)
+  expect(isChromiumNavigablePort(10_081)).toBe(true)
+  expect(isChromiumNavigablePort(0)).toBe(false)
+  expect(isChromiumNavigablePort(65_536)).toBe(false)
+})
 
 async function writeSkill(root: string, name: string): Promise<void> {
   const bundle = join(root, name)

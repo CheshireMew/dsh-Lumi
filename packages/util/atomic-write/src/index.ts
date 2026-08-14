@@ -13,6 +13,7 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 /**
  * Filesystem options for {@link writeFileAtomic}; `mode` is required so the
@@ -40,7 +41,9 @@ export interface WriteFileAtomicOptions {
  * rename, so replacing a wider-permission file narrows it without a chmod
  * race. The rename also replaces a symlinked target itself instead of writing
  * through to its referent, and the same-directory sibling keeps the rename on
- * one filesystem. On any failure the temp file is removed and the failure
+ * one filesystem. A rename blocked temporarily by antivirus, indexing, or a
+ * watcher is retried within a bounded window; other failures surface
+ * immediately. On final failure the temp file is removed and the failure
  * rethrown. Crash durability (fsync) is out of scope.
  * @param filename - final path receiving the content.
  * @param content - complete next file content.
@@ -56,10 +59,38 @@ export async function writeFileAtomic(filename: string, content: string, options
   const temp = `${filename}.${randomBytes(6).toString('hex')}.tmp`
   try {
     await writeFile(temp, content, { mode: options.mode, flag: 'wx' })
-    await rename(temp, filename)
+    await replaceFile(temp, filename)
   } catch (error) {
     await rm(temp, { force: true })
     throw error
+  }
+}
+
+/** Rename failure codes that can mean a temporary filesystem handle on Windows. */
+function isRetryableRenameError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return code === 'EACCES' || code === 'EBUSY' || code === 'EPERM'
+}
+
+/**
+ * Retry constants match the vendored Loader include writer. These are fixed
+ * filesystem-recovery semantics: eleven attempts span 2.75 seconds, long
+ * enough for a one-shot scanner or watcher handle to drain without turning a
+ * permanent permission failure into an unbounded write.
+ */
+const RENAME_RETRY_LIMIT = 10
+const RENAME_RETRY_DELAY_MS = 50
+
+/** Replace one sibling path, retrying only transient rename error classes. */
+async function replaceFile(temp: string, filename: string): Promise<void> {
+  for (let retry = 0; ; retry += 1) {
+    try {
+      await rename(temp, filename)
+      return
+    } catch (error) {
+      if (!isRetryableRenameError(error) || retry >= RENAME_RETRY_LIMIT) throw error
+      await delay((retry + 1) * RENAME_RETRY_DELAY_MS)
+    }
   }
 }
 

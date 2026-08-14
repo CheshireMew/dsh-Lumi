@@ -1,14 +1,37 @@
 import { lstat, mkdir, mkdtemp, readFile, readdir, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { withFileLock, writeFileAtomic } from '../src/index.ts'
+
+const renameControl = vi.hoisted(() => ({ calls: 0, failures: 0, code: 'EPERM' }))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    rename: async (...args: Parameters<typeof actual.rename>): Promise<void> => {
+      renameControl.calls += 1
+      if (renameControl.failures > 0) {
+        renameControl.failures -= 1
+        throw Object.assign(new Error(`${renameControl.code}: injected rename failure`), { code: renameControl.code })
+      }
+      await actual.rename(...args)
+    },
+  }
+})
 
 async function scratch(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'dsh-atomic-write-'))
 }
 
 describe('writeFileAtomic', () => {
+  beforeEach(() => {
+    renameControl.calls = 0
+    renameControl.failures = 0
+    renameControl.code = 'EPERM'
+  })
+
   it('creates the file and its parents with exactly the stated mode', async () => {
     const dir = await scratch()
     const target = join(dir, 'nested', 'deep', 'doc.yaml')
@@ -44,7 +67,30 @@ describe('writeFileAtomic', () => {
     await mkdir(target)
     await expect(writeFileAtomic(target, 'content', { mode: 0o600 })).rejects.toThrow()
     expect((await readdir(dir)).filter(entry => entry.includes('.tmp'))).toEqual([])
+  }, 10_000)
+
+  it.each(['EACCES', 'EBUSY', 'EPERM'])('retries a transient %s rename failure', async (code) => {
+    const dir = await scratch()
+    const target = join(dir, 'doc.yaml')
+    renameControl.failures = 2
+    renameControl.code = code
+
+    await writeFileAtomic(target, 'new', { mode: 0o600 })
+
+    expect(renameControl.calls).toBe(3)
+    expect(await readFile(target, 'utf8')).toBe('new')
   })
+
+  it('bounds transient rename retries and removes the temp sibling', async () => {
+    const dir = await scratch()
+    const target = join(dir, 'doc.yaml')
+    renameControl.failures = 20
+
+    await expect(writeFileAtomic(target, 'new', { mode: 0o600 })).rejects.toMatchObject({ code: 'EPERM' })
+
+    expect(renameControl.calls).toBe(11)
+    expect((await readdir(dir)).filter(entry => entry.includes('.tmp'))).toEqual([])
+  }, 10_000)
 })
 
 describe('withFileLock', () => {

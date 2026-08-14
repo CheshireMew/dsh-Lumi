@@ -150,6 +150,7 @@ function writeBaseRecord(commit: string, checks: readonly CheckResult[]): void {
 }
 
 function synchronize(): void {
+  const startingBranch = git(['branch', '--show-current'])
   assertClean()
   git(['fetch', '--prune', '--tags', config.remote, config.branch], true)
   const previousBase = git(['rev-parse', 'upstream-base'])
@@ -161,9 +162,16 @@ function synchronize(): void {
   const nextBase = git(['rev-parse', target])
   const date = localDate()
   const branch = `codex/sync-${date.replaceAll('-', '')}-${nextBase.slice(0, 8)}`
-  if (gitSucceeds(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])) throw new Error(`sync branch already exists: ${branch}`)
-  git(['switch', 'main'], true)
-  git(['switch', '-c', branch], true)
+  const existingBranch = gitSucceeds(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])
+  if (existingBranch && startingBranch !== branch) {
+    throw new Error(`sync branch already exists: ${branch}; switch to it to resume the preserved synchronization`)
+  }
+  if (existingBranch) {
+    git(['switch', branch], true)
+  } else {
+    git(['switch', 'main'], true)
+    git(['switch', '-c', branch], true)
+  }
   const merge = spawnSync('git', ['merge', '--no-edit', 'upstream-base'], { cwd: root, encoding: 'utf8', shell: false, stdio: 'inherit' })
   if (merge.status !== 0) {
     console.error(`Merge stopped on ${branch}. Resolve conflicts and keep the branch; the script does not reset or delete the merge state.`)
