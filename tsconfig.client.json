@@ -63,7 +63,7 @@
     { "path": "./packages/extensions/ui-cordis" },
     { "path": "./packages/test-support/client-runtime" },
     { "path": "./packages/client/ui-layout" },
-    { "path": "./packages/client/lumi-character" },
+    { "path": "./packages/client/lumi-character/tsconfig.client.json" },
     { "path": "./packages/client/lumi-shell" },
     { "path": "./packages/client/ui-sidebar" },
     { "path": "./packages/client/ui-conversation" },

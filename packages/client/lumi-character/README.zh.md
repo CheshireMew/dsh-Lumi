@@ -4,6 +4,8 @@
 
 Electron Lumi 外壳的角色领域。宿主端注册 `ui-lumi` 设置命名空间，并从 `$DSH_HOME/lumi/packs` 提供 Character Pack v1 素材；浏览器端组合彼此独立的角色包传输校验、语音播放、有界默契账本、角色包实时刷新、可观察角色状态、「常规设置」配置项，以及每条助手消息的朗读、暂停、继续和停止操作。
 
+包根 tsconfig 是显式 Host 与 Client leaf 之上的 solution。Host 编译拥有本地角色包发现、设置注册、路由和不变量伴随插件；Client 编译拥有浏览器状态、语音与组件。bond、manifest、内置角色包和设置模块作为完全相同的共享输入列入两个 leaf；浏览器消费方通过专用的 `@dsh-lumi/client-character/contract` 子路径导入角色包类型。直接 Project Reference 必须指向匹配的 leaf，避免 Host 构建在 Typert 生成 Client Remote 声明前进入客户端代码。
+
 角色包 manifest 会声明画布、固定预览和背景、身体与口型层、表情和效果映射、带动画与 fallback 的全部八个状态、待机动作，以及中英文默契解锁。无效 manifest、重复 id、路径穿越、缺失素材与不支持的图像格式都会被拒绝；原创内置 Lumi 分层素材始终作为回退角色可用。缺少许可证的有效角色包只能在本机使用。
 
 ## 模型体验

@@ -194,6 +194,7 @@
       "@deepseek-ai/dsh-client-test-runtime/invariant": ["./packages/test-support/client-runtime/src/invariant.ts"],
       "@deepseek-ai/dsh-client-ui-layout": ["./packages/client/ui-layout/src"],
       "@dsh-lumi/client-character": ["./packages/client/lumi-character/src"],
+      "@dsh-lumi/client-character/contract": ["./packages/client/lumi-character/src/pack-contract.ts"],
       "@dsh-lumi/client-character/client": ["./packages/client/lumi-character/src/client"],
       "@dsh-lumi/client-character/invariant": ["./packages/client/lumi-character/src/invariant.ts"],
       "@dsh-lumi/client-shell": ["./packages/client/lumi-shell/src"],

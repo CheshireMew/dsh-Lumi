@@ -787,12 +787,9 @@ const EVENT_API_METHODS = new Set(['on', 'once', 'emit', 'parallel', 'serial', '
 /**
  * Collect event dispatch/listener relations from real cross-file receiver types.
  *
- * TODO: the program is seeded from the host aggregate alone (ts-project.ts
- * documents why: one program cannot hold both faces' Context merges), so a
- * Client package enters only when a host file imports it. Client-face
- * listeners on client-face events are therefore under-reported —
-   * `connection/reset` omits `ui-skill`/`ui-agent-preset`. Closing it needs a
-   * second Client program whose relations merge into these, not a wider seed.
+ * Host and Client are scanned as separate programs because their Cordis
+ * Context declarations cannot coexist in one program. Their relation sets are
+ * merged after semantic classification, preserving both compiler faces.
  */
 export class EventRelationCollector {
   private readonly relations = new Map<string, EventRelation>()
@@ -1159,9 +1156,28 @@ export function collectPackageSources(project: TypeScriptProject): PackageSource
   }).sort((left, right) => left.rel.localeCompare(right.rel))
 }
 
-function collectEventRelations(): Map<string, EventRelation> {
-  const project = new TypeScriptProject(root)
-  return new EventRelationCollector(project, collectPackageSources(project)).collect()
+/**
+ * Collect and merge event relations from isolated Host and Client programs.
+ * @param projectRoot - Repository root containing both aggregate configs.
+ * @returns Relations deduplicated across both compiler faces.
+ */
+export function collectEventRelations(projectRoot = root): Map<string, EventRelation> {
+  const merged = new Map<string, EventRelation>()
+  for (const face of ['host', 'client'] as const) {
+    const project = new TypeScriptProject(projectRoot, face)
+    const relations = new EventRelationCollector(project, collectPackageSources(project)).collect()
+    for (const [event, relation] of relations) {
+      const target = merged.get(event) ?? { dispatchers: new Map<string, Set<string>>(), listeners: new Set<string>() }
+      addAll(target.listeners, relation.listeners)
+      for (const [pkg, methods] of relation.dispatchers) {
+        const targetMethods = target.dispatchers.get(pkg) ?? new Set<string>()
+        addAll(targetMethods, methods)
+        target.dispatchers.set(pkg, targetMethods)
+      }
+      merged.set(event, target)
+    }
+  }
+  return merged
 }
 
 function relationPackages(map: Map<string, Set<string>>, pkgsByShort: Map<string, Pkg>): string {
@@ -1180,7 +1196,7 @@ function listenerPackages(listeners: Set<string>, pkgsByShort: Map<string, Pkg>)
 function renderEventRelations(pkgs: Pkg[], events: readonly EventEntry[]): string {
   const relations = collectEventRelations()
   const pkgsByShort = new Map(pkgs.map(pkg => [pkg.short, pkg]))
-  const maintenance = 'generated: Cordis event declarations and producer/listener edges are resolved from the repository TypeScript Program'
+  const maintenance = 'generated: Cordis event declarations and producer/listener edges are resolved from isolated Host and Client TypeScript Programs'
   const lines = generatedHeader('Event Producer And Consumer Matrix')
   lines.push(
     'This matrix shows which packages dispatch each harness-owned event and which packages listen to it. Events are many-to-many, so the dense relation data is presented as a table rather than one large graph. Receiver and event-name types also cover contained dispatch sites that deliberately bypass `ctx.emit`, such as subagent lifecycle containment.',
@@ -1194,10 +1210,8 @@ function renderEventRelations(pkgs: Pkg[], events: readonly EventEntry[]): strin
   }
   // Every declared event needs a dispatcher: zero means dead vocabulary or an
   // unrecognized semantic dispatch form. Listener-free extension points remain
-  // valid. Client-declared events are exempt: the relation scan seeds the HOST
-  // aggregate program only (host+client cannot share one program — the cordis
-  // Context merges collide), so client dispatch sites are structurally
-  // invisible here; their rows stay in the table for the declarations' sake.
+  // valid. Client-declared events are exempt because some are framework-fed
+  // extension points with no repository-owned dispatcher.
   const undispatched = [...events]
     .filter(event => !event.source.startsWith('packages/client/'))
     .filter(event => (relations.get(event.name)?.dispatchers.size ?? 0) === 0)

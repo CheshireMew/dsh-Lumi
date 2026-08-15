@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { collectPackageSources, EventRelationCollector } from './gen-doc-graphs.ts'
+import { collectEventRelations, collectPackageSources, EventRelationCollector } from './gen-doc-graphs.ts'
 import { TypeScriptProject } from './ts-project.ts'
 
 const FIXTURE: Record<string, string> = {
@@ -23,7 +23,19 @@ const FIXTURE: Record<string, string> = {
       skipLibCheck: true,
       types: [],
     },
-    include: ['vendor/**/*.ts', 'packages/**/*.ts'],
+    include: ['vendor/**/*.ts', 'packages/core/agent/**/*.ts', 'packages/fix/**/*.ts'],
+  }),
+  'tsconfig.client.json': JSON.stringify({
+    compilerOptions: {
+      target: 'es2022',
+      module: 'esnext',
+      moduleResolution: 'bundler',
+      allowImportingTsExtensions: true,
+      noEmit: true,
+      skipLibCheck: true,
+      types: [],
+    },
+    include: ['vendor/**/*.ts', 'packages/core/agent/**/*.ts', 'packages/client/**/*.ts'],
   }),
   'vendor/cordis/src/context.ts': 'export class Context { private brand!: void }\n',
   'vendor/cordis/src/events.ts': [
@@ -61,6 +73,13 @@ const FIXTURE: Record<string, string> = {
   'packages/fix/pkgc/src/helper.ts':
     "function scriptFire(args: [string]): void { void gEvents.dispatch('emit', args) }\n",
   'packages/fix/pkgc/src/caller.ts': "scriptFire(['pkgc/script-event'])\n",
+  'packages/client/client-ui/src/index.ts': [
+    "import { EventsService } from '../../../../vendor/cordis/src/events.ts'",
+    'declare const events: EventsService',
+    "void events.dispatch('emit', ['pkga/local-event'])",
+    "void events.dispatch('emit', ['client/unique-event'])",
+    '',
+  ].join('\n'),
 }
 
 const root = mkdtempSync(join(tmpdir(), 'gen-doc-graphs-'))
@@ -82,6 +101,12 @@ function dispatchersOf(pkgs: readonly string[], event: string): string[] {
 }
 
 describe('event relation call-site indexing', () => {
+  it('merges independently typed Host and Client event relations', () => {
+    const relations = collectEventRelations(root)
+    expect([...(relations.get('pkga/local-event')?.dispatchers.keys() ?? [])].sort()).toEqual(['client-ui', 'pkga'])
+    expect([...(relations.get('client/unique-event')?.dispatchers.keys() ?? [])]).toEqual(['client-ui'])
+  })
+
   it('recovers a proven-local helper through the single-file fast path', () => {
     expect(dispatchersOf(['pkga', 'pkgb'], 'pkga/local-event')).toEqual(['pkga'])
   })

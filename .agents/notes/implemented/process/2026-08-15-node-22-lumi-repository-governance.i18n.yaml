@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-08-15-node-22-lumi-repository-governance.md
-2026-08-15-node-22-lumi-repository-governance.md: 68a23651a1c0df33a455095bc6785962a269c741
-2026-08-15-node-22-lumi-repository-governance.zh.md: 244003bb16938b074299c07f2c08f4a196c0c5c3
+2026-08-15-node-22-lumi-repository-governance.md: 0a0bafd2c3e72a530c5793a862f9d501278b4d5e
+2026-08-15-node-22-lumi-repository-governance.zh.md: f464b75bd27d81789784c039538892a10f106131

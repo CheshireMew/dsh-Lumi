@@ -8,7 +8,7 @@
   "references": [
     { "path": "../../../vendor/cordis" },
     { "path": "../../runtime-diagnostics/invariants" },
-    { "path": "../lumi-character" },
+    { "path": "../lumi-character/tsconfig.client.json" },
     { "path": "../locale" },
     { "path": "../runtime" },
     { "path": "../ui-conversation" },

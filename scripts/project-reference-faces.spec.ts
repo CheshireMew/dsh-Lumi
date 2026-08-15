@@ -21,14 +21,21 @@ function workspaceFixture(options: {
   const root = mkdtempSync(join(tmpdir(), 'dsh-project-reference-faces-'))
   roots.push(root)
   const shared = join(root, 'packages/core/shared')
+  const clientOnly = join(root, 'packages/client/client-only')
   const split = join(root, 'packages/api/split')
   mkdirSync(shared, { recursive: true })
+  mkdirSync(clientOnly, { recursive: true })
   mkdirSync(split, { recursive: true })
   writeJson(join(root, 'tsconfig.base.json'), {})
   writeJson(join(root, 'tsconfig.base.client.json'), { extends: './tsconfig.base.json' })
   writeJson(join(shared, 'package.json'), { name: '@deepseek-ai/dsh-shared' })
   writeJson(join(shared, 'tsconfig.json'), {
     extends: '../../../tsconfig.base.json',
+    references: [],
+  })
+  writeJson(join(clientOnly, 'package.json'), { name: '@deepseek-ai/dsh-client-only' })
+  writeJson(join(clientOnly, 'tsconfig.json'), {
+    extends: '../../../tsconfig.base.client.json',
     references: [],
   })
   writeJson(join(split, 'package.json'), { name: '@deepseek-ai/dsh-split' })
@@ -48,13 +55,28 @@ function workspaceFixture(options: {
 }
 
 describe('Project Reference compiler faces', () => {
-  it('allows neutral projects in either graph and matching split leaves', () => {
+  it('allows shared projects in either graph, Client projects in the Client graph, and matching split leaves', () => {
     const root = workspaceFixture({
       host: ['./packages/core/shared', './packages/api/split/tsconfig.host.json'],
-      client: ['./packages/core/shared', './packages/api/split/tsconfig.client.json'],
+      client: [
+        './packages/core/shared',
+        './packages/client/client-only',
+        './packages/api/split/tsconfig.client.json',
+      ],
     })
 
     expect(collectProjectReferenceFaceViolations(root)).toEqual([])
+  })
+
+  it('rejects a Client-only single-config project from the Host graph', () => {
+    const root = workspaceFixture({
+      host: ['./packages/client/client-only'],
+      client: [],
+    })
+
+    expect(collectProjectReferenceFaceViolations(root)).toEqual([
+      'tsconfig.host.json: Project Reference "./packages/client/client-only" enters Client project packages/client/client-only/tsconfig.json from a Host config',
+    ])
   })
 
   it('rejects the opposite leaf and the solution root of a split project', () => {

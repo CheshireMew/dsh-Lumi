@@ -20,9 +20,10 @@ const WORKSPACE_MANIFESTS = [
 /**
  * Find references that enter the wrong leaf of a split Host/Client project.
  *
- * A single-config project is neutral and may participate in either graph. Once
- * a package declares both face configs, every reachable reference must name
- * the leaf matching the aggregate from which traversal began.
+ * A shared single-config project may participate in either graph, but a
+ * single-config project extending the Client base cannot enter the Host graph.
+ * Once a package declares both face configs, every reachable reference must
+ * name the leaf matching the compiler face of the referencing project.
  *
  * @param root - Repository root containing both aggregate tsconfigs.
  * @returns Repo-relative diagnostics for every mismatched reference edge.
@@ -54,6 +55,13 @@ export function collectProjectReferenceFaceViolations(root: string): string[] {
           )
           continue
         }
+      }
+      const targetFace = projectFace(root, targetConfig, projectConfig(root, targetConfig))
+      if (face === 'host' && targetFace === 'client') {
+        violations.push(
+          `${repoPath(root, configPath)}: Project Reference ${JSON.stringify(reference)} enters Client project ${repoPath(root, targetConfig)} from a Host config`,
+        )
+        continue
       }
       pending.push(targetConfig)
     }

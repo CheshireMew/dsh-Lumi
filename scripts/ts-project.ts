@@ -11,6 +11,9 @@ interface ProjectGraph {
   options: ts.CompilerOptions
 }
 
+/** One compiler face selected as the root of a repository semantic program. */
+export type TypeScriptProjectFace = 'host' | 'client'
+
 /** TypeScript config host shared by repository scripts. */
 export const repositoryConfigHost: ts.ParseConfigFileHost = {
   useCaseSensitiveFileNames: ts.sys.useCaseSensitiveFileNames,
@@ -24,12 +27,15 @@ export const repositoryConfigHost: ts.ParseConfigFileHost = {
 }
 
 /**
- * Parse the host aggregate tsconfig and flatten all referenced projects into one
- * semantic graph. Never seed the root solution: flattening host+client into one
- * program collides the cordis Context merges.
+ * Parse one aggregate tsconfig and flatten all referenced projects into one
+ * semantic graph. Never seed the root solution: flattening Host and Client into
+ * one program collides the cordis Context merges.
+ * @param projectRoot - Repository root containing the aggregate configs.
+ * @param face - Compiler face whose aggregate seeds the semantic program.
+ * @returns Flattened source roots and compiler options for the selected face.
  */
-function loadProjectGraph(projectRoot: string): ProjectGraph {
-  const rootConfigPath = resolve(projectRoot, 'tsconfig.host.json')
+function loadProjectGraph(projectRoot: string, face: TypeScriptProjectFace): ProjectGraph {
+  const rootConfigPath = resolve(projectRoot, `tsconfig.${face}.json`)
   const rootConfig = parseConfig(rootConfigPath)
   const rootNames = new Set<string>()
   const visited = new Set<string>()
@@ -81,8 +87,12 @@ export class TypeScriptProject {
   /** The checker shared by every semantic query in this project. */
   readonly checker: ts.TypeChecker
 
-  constructor(private readonly projectRoot: string) {
-    const graph = loadProjectGraph(projectRoot)
+  /**
+   * @param projectRoot - Repository root containing the selected aggregate.
+   * @param face - Compiler face to load; Host remains the default for existing gates.
+   */
+  constructor(private readonly projectRoot: string, face: TypeScriptProjectFace = 'host') {
+    const graph = loadProjectGraph(projectRoot, face)
     this.program = ts.createProgram(graph.rootNames, semanticCompilerOptions(graph.options))
     this.checker = this.program.getTypeChecker()
   }

@@ -3,7 +3,7 @@ import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots
 import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ConversationNode } from '@deepseek-ai/dsh-client-runtime/client'
 import type { LumiCharacterInjected } from '@dsh-lumi/client-character/client'
-import type { LumiAnimationDefinition, LumiCharacterStateDefinition, CharacterState } from '@dsh-lumi/client-character'
+import type { LumiAnimationDefinition, LumiCharacterStateDefinition, CharacterState } from '@dsh-lumi/client-character/contract'
 import './desktop-api.ts'
 import { LUMI_LAYOUT_CONFIG, effectiveLumiLayout } from './layout-config.ts'
 import css from './LumiFrame.module.css'

@@ -48,8 +48,8 @@ pnpm run typecheck
 | 文件 | 角色 | 是否构成 program？ |
 |---|---|---|
 | `tsconfig.json` | solution 根：`extends` base、`files: []`、引用两个 aggregate。它是 tsserver 发现入口，也是显式执行整张 Project Reference 图时的入口；经继承的 `paths` 充当 tsx 运行 `examples/` 与 `scripts/` 时的解析配置。 | 否 |
-| `tsconfig.host.json` | Host aggregate：Host 包、示例、测试、脚本和 website，以及 `api/remotes` 的 Host 特例 project。 | 是 |
-| `tsconfig.client.json` | Client aggregate：`packages/client/*` 包及其测试、`apps/web`，以及 `api/remotes` 的 Client 特例 project。 | 是 |
+| `tsconfig.host.json` | Host aggregate：Host 包、示例、测试、脚本、website，以及拆分包的 Host leaf。 | 是 |
+| `tsconfig.client.json` | Client aggregate：`packages/client/*` 包及其测试、`apps/web`，以及拆分包的 Client leaf。 | 是 |
 | `tsconfig.base.json` | 共享 compilerOptions 与源码 `paths` 映射。同时是各 vitest 配置让 vite-tsconfig-paths 指向的解析门面：它没有 `include`，因此其 `paths` 适用于任何 importer。 | 否 |
 | `tsconfig.base.client.json` | 浏览器编译设置（`jsx`、DOM lib、`types: []`），由 Client aggregate 和每个 `packages/client/*` 包 extends。 | 否 |
 
@@ -57,9 +57,9 @@ Host 与 Client 保持两个 aggregate program，是因为两侧在相同键下�
 
 - `tsconfig.base.json` 永不添加 `include` 或 `files`：它们会泄漏进每个 extends 它的包项目，并收窄门面的全匹配范围。
 - 构造全仓 `ts.Program` 的脚本显式以 `tsconfig.host.json` 或 `tsconfig.client.json` 为种子——根 solution 永不作为种子，因为把两个 aggregate 展平进一个 program 会撞上 `Context` 合并冲突。
-- 新包只登记进一个 aggregate。包同时具有 Node loader 入口和 browser 入口并不构成拆分理由；普通 Client 插件的两份运行时产物都在 Client 构建阶段生成。
+- 新包只登记进一个 aggregate，除非其源码确实拥有无法进入同一 program 的 Host 与 Client 部分。仅仅同时具有 Node loader 与 browser 入口不构成拆分理由；普通 Client 插件的两份运行时产物都在 Client 构建阶段生成。
 
-`api/remotes` 是唯一拆分 Host/Client tsconfig 的仓库特例。它的 Host 入口必须进入 Host Typert 图，而 Client 入口导入 Host tsdown 才会生成的 `/remote` 声明，因此本包根 `tsconfig.json` 只作为 solution，两个 aggregate 和直接消费方分别引用 `tsconfig.host.json` 或 `tsconfig.client.json`。workspace `constraints` 门禁遍历可达的 Project Reference 图，并按各引用 project 自身的 compiler face 检查：只有单一配置的目标可由任一 face 引用，拆分配置的目标则必须引用匹配的 leaf，不得引用 solution 根或另一侧 leaf；该门禁按「两个 leaf 配置同时存在」自动发现拆分包，所以新拆分的包会自动纳入管辖。不要把该结构推广到其他包；[`api-remotes` README](../packages/api/remotes/README.md) 说明 Host/Client 拆分与构建顺序。
+仓库有两个拆分 Host/Client tsconfig 的包。`api/remotes` 需要拆分，是因为 Host 入口参与 Host Typert 图，而 Client 入口导入 Host tsdown 才会生成的 `/remote` 声明。`lumi-character` 需要拆分，是因为 Host 文件拥有本地设置、文件系统角色包和 Web 路由，Client 文件拥有 DOM 语音与 UI 状态；bond、manifest 和设置定义被有意同时列入两个 leaf。两个包的根 `tsconfig.json` 都只作为 solution，aggregate 和直接消费方分别引用 `tsconfig.host.json` 或 `tsconfig.client.json`。workspace `constraints` 检查每个可达 project 自身声明的 compiler face：共享的单配置 project 可进入任一 aggregate，继承 `tsconfig.base.client.json` 的单配置 project 不能进入 Host 图，拆分目标必须指向与引用方匹配的 leaf，不得引用 solution 根或另一侧 leaf。该检查按「两个 leaf 配置同时存在」自动发现拆分包，所以新拆分包会自动纳入管辖。[`api-remotes` README](../packages/api/remotes/README.md) 说明生成声明的构建顺序细节。
 
 根构建按生成依赖排序：
 

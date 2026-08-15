@@ -19,6 +19,10 @@
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
     },
+    "./contract": {
+      "types": "./lib/types/pack-contract.d.ts",
+      "default": "./lib/pack-contract.js"
+    },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
@@ -87,6 +91,7 @@
   "files": [
     "lib/index.js",
     "lib/invariant.js",
+    "lib/pack-contract.js",
     "lib/client.js",
     "lib/types/**/*.d.ts",
     "assets"
