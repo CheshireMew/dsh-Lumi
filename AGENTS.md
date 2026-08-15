@@ -4,7 +4,7 @@ DeepSeek Harness is a plugin-based agent harness on vendored Cordis: **everythin
 
 ## Pre-release stance: foundation over blast radius
 
-**Remove this section at the first tagged release.** With no external consumers, prefer the correct foundation over compatibility shims: rename or repackage freely and update every reference together. Backends reject old on-disk formats. SQLite uses monotonic `SCHEMA_VERSION`; `dsh-session` keeps `SESSION_FORMAT_VERSION` at `0` with no compatibility promise.
+**Remove at the first tagged release.** With no external consumers, prefer correct foundations over compatibility shims; rename or repackage and update all references together. Backends reject old disk formats. SQLite advances `SCHEMA_VERSION`; `dsh-session` stays at `SESSION_FORMAT_VERSION = 0` without compatibility promises.
 
 ## Repository layout
 
@@ -81,14 +81,15 @@ pnpm run demo:acp       # ACP automation server (needs DEEPSEEK_API_KEY)
 
 ### Host sandbox failures
 
-When required `gh`, `pnpm`, build, test, or generator commands fail because the agent sandbox blocks credentials, network, IPC, file watching, or nested `sandbox-exec`, retry unchanged with the narrowest host escalation before diagnosing authentication or project failure. Require sandbox evidence; never bypass genuine test failures or the product sandbox under test.
+When required commands fail because the agent sandbox blocks credentials, network, IPC, file watching, or nested `sandbox-exec`, retry unchanged with the narrowest host escalation. Require sandbox evidence; never bypass product failures or the product sandbox.
 
 ### Run relevant checks locally
 
-Run checks before pushes via [dsh-pre-push-checks](.agents/skills/dsh-pre-push-checks/SKILL.md); report only commands run. After `gh stack sync`, validate immediately; do not merge before checks pass.
+Before pushes, use [dsh-pre-push-checks](.agents/skills/dsh-pre-push-checks/SKILL.md); after `gh stack sync`, validate before merging.
 
-- Match evidence to the surface: focused tests for behavior, snapshots for model or user output, `doc-sync` for docs, build/hygiene and built smokes for published paths, and real-API e2e for provider behavior.
-- Never default to the full suite or repeat a passing check for commit or push. CI owns exhaustive coverage and the platform matrix; rehearse all locally only by explicit request, for CI diagnosis, or for an irreducibly repository-wide change.
+- Choose the smallest checks for each change: focused tests, model-output snapshots, `doc-sync`, published-path build/hygiene smokes, and real-API e2e. Before long commands, verify runtimes, prerequisites, and credentials without printing secrets; set outer timeouts above measured and internal limits.
+- Reuse passes until affected. After failure, rerun the smallest failing test and combine it with unaffected evidence. Run complete suites once, by request, for CI diagnosis, or after repository-wide changes.
+- Per upstream commit, resume its branch across dates and run only failed or missing steps; incomplete reports never warrant new branches or repeated passes. Log each long command's commit, start/end, outcome, and path.
 - `test:coverage`, not `test`, is the CI coverage gate ([why](docs/testing.md)).
 
 ## Secrets / .env
