@@ -11,7 +11,10 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync,
+} from 'node:fs'
+import { mkdir, open, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -34,6 +37,21 @@ export interface WriteFileAtomicOptions {
 }
 
 /**
+ * Error raised after the replacement became visible but its final durability
+ * barrier failed. Callers must re-read before deciding whether to retry.
+ */
+export class AtomicWriteDurabilityError extends Error {
+  /** The replacement was published before the durability barrier failed. */
+  readonly committed = true
+
+  /** @param filename Visible replacement whose durable outcome is unknown. @param cause Filesystem failure. */
+  constructor(readonly filename: string, cause: unknown) {
+    super(`atomic-write: replacement is visible but could not be confirmed durable at ${filename}`, { cause })
+    this.name = 'AtomicWriteDurabilityError'
+  }
+}
+
+/**
  * Replace `filename` with `content` in one atomic step, creating parent
  * directories. The content is first written to a random-suffix sibling opened
  * with exclusive create (`wx`): the open refuses to follow a symlink planted
@@ -41,10 +59,14 @@ export interface WriteFileAtomicOptions {
  * rename, so replacing a wider-permission file narrows it without a chmod
  * race. The rename also replaces a symlinked target itself instead of writing
  * through to its referent, and the same-directory sibling keeps the rename on
- * one filesystem. A rename blocked temporarily by antivirus, indexing, or a
+ * one filesystem. The temp inode is flushed before rename; the committed file
+ * is flushed again after rename, followed by its parent directory where the
+ * operating system exposes directory flushing. A rename blocked temporarily by antivirus, indexing, or a
  * watcher is retried within a bounded window; other failures surface
  * immediately. On final failure the temp file is removed and the failure
- * rethrown. Crash durability (fsync) is out of scope.
+ * rethrown. A post-rename durability failure raises
+ * {@link AtomicWriteDurabilityError}, distinguishing an already-visible commit
+ * from a pre-commit failure.
  * @param filename - final path receiving the content.
  * @param content - complete next file content.
  * @param options - permission bits for the replacement inode.
@@ -54,15 +76,88 @@ export async function writeFileAtomic(filename: string, content: string, options
     recursive: true,
     ...options.dirMode === undefined ? {} : { mode: options.dirMode },
   })
-  // TODO(settings-atomic-durability): Use a replacement that fsyncs the file
-  // and parent directory and preserves owner-only permissions on Windows.
   const temp = `${filename}.${randomBytes(6).toString('hex')}.tmp`
+  let committed = false
   try {
-    await writeFile(temp, content, { mode: options.mode, flag: 'wx' })
+    const handle = await open(temp, 'wx', options.mode)
+    try {
+      await handle.writeFile(content)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
     await replaceFile(temp, filename)
+    committed = true
+    await syncCommittedPath(filename)
   } catch (error) {
-    await rm(temp, { force: true })
-    throw error
+    if (!committed) {
+      await rm(temp, { force: true })
+      throw error
+    }
+    throw new AtomicWriteDurabilityError(filename, error)
+  }
+}
+
+/**
+ * Synchronous companion for lifecycle handlers that must finish before the
+ * process exits, such as Electron window placement persistence.
+ * @param filename Final path receiving the content.
+ * @param content Complete next file content.
+ * @param options Permission bits for the replacement inode.
+ */
+export function writeFileAtomicSync(filename: string, content: string, options: WriteFileAtomicOptions): void {
+  mkdirSync(dirname(filename), {
+    recursive: true,
+    ...options.dirMode === undefined ? {} : { mode: options.dirMode },
+  })
+  const temp = `${filename}.${randomBytes(6).toString('hex')}.tmp`
+  let committed = false
+  try {
+    const descriptor = openSync(temp, 'wx', options.mode)
+    try {
+      writeFileSync(descriptor, content)
+      fsyncSync(descriptor)
+    } finally {
+      closeSync(descriptor)
+    }
+    renameSync(temp, filename)
+    committed = true
+    syncCommittedPathSync(filename)
+  } catch (error) {
+    if (!committed) {
+      rmSync(temp, { force: true })
+      throw error
+    }
+    throw new AtomicWriteDurabilityError(filename, error)
+  }
+}
+
+/** Windows exposes file flushing but rejects directory fsync with EPERM. */
+function unsupportedDirectorySync(error: unknown): boolean {
+  return process.platform === 'win32' && (error as NodeJS.ErrnoException | null)?.code === 'EPERM'
+}
+
+/** Flush the committed file and the rename entry where supported. */
+async function syncCommittedPath(filename: string): Promise<void> {
+  const file = await open(filename, 'r+')
+  try { await file.sync() } finally { await file.close() }
+  const directory = await open(dirname(filename), 'r')
+  try {
+    try { await directory.sync() } catch (error) { if (!unsupportedDirectorySync(error)) throw error }
+  } finally {
+    await directory.close()
+  }
+}
+
+/** Synchronous committed-file durability barrier. */
+function syncCommittedPathSync(filename: string): void {
+  const file = openSync(filename, 'r+')
+  try { fsyncSync(file) } finally { closeSync(file) }
+  const directory = openSync(dirname(filename), 'r')
+  try {
+    try { fsyncSync(directory) } catch (error) { if (!unsupportedDirectorySync(error)) throw error }
+  } finally {
+    closeSync(directory)
   }
 }
 

@@ -224,7 +224,7 @@ describe('Node compatibility graph', () => {
   })
 })
 
-describe('Node 24 lane ownership', () => {
+describe('Node 22 lane ownership', () => {
   it('keeps the static lane source-only', () => {
     const subject = withPnpmEntrypoint(() => gatesForMode('ci-static'))
 

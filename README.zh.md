@@ -1,50 +1,45 @@
-# DeepSeek Harness
+# Lumi
 
 [English](README.md) | 中文
 
-DeepSeek Harness（`dsh`）是由 [DeepSeek AI](https://deepseek.com) 开发的开源 agent harness（智能体框架）。
+Lumi 是基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 构建的 Windows 桌面体验。它在保留 Harness 会话、插件、设置与工具体系的基础上，增加了常驻角色、场景／工作布局、本地角色包、语音和默契度成长。
 
-它采用**一切皆插件**的架构，并由 [Cordis](https://github.com/cordiverse/cordis) 驱动，其设计参见论文 [_A Programming Paradigm for Spatiotemporal Composability_](https://github.com/cordiverse/paper)。
+这层扩展保持增量组合：Lumi 通过插件叠加在官方 Web 应用之上，Electron 负责桌面窗口、本地进程生命周期、诊断、Windows 签名交付和更新检查。底层仍遵循**一切皆插件**的架构，并由 [Cordis](https://github.com/cordiverse/cordis) 驱动。
 
 ## 开发者预览
 
-DeepSeek Harness 目前处于 _开发者预览_ 阶段，正在快速迭代。**未来将出现破坏兼容性的变更。**
+Lumi 目前处于 _开发者预览_ 阶段，正在快速迭代。**未来将出现破坏兼容性的变更。**
 
 ## 运行
 
-### 通过 `npm` 运行
-
-安装 `Node.js`，然后运行：
-
-```sh
-npx @deepseek-ai/dsh web
-```
-
-该命令会启动 Web UI，默认地址为 `http://127.0.0.1:3080`。详见 [Web UI 指南](docs/user/guide/index.md)。
-
 ### 从源码运行
 
-如需从仓库源码运行：
+安装 Node 22.23.2，通过 Corepack 启用仓库固定的 pnpm，然后从源码运行：
 
 ```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git
-cd deepseek-harness
+git clone https://github.com/CheshireMew/dsh-Lumi.git
+cd dsh-Lumi
+corepack enable
 pnpm install
+pnpm run dev:lumi
+```
+
+Lumi 会先构建完整的 Harness 与 Lumi 应用，再打开 Electron 窗口。已有会话、设置、凭据、插件、角色包和日志继续存放在普通 `$DSH_HOME` 下。详见 [Lumi 桌面版指南](docs/user/guide/lumi-desktop.md)。
+
+Windows 签名安装程序通过受保护且标签完全匹配的发布工作流进入草稿 Release，要求 Windows 代码签名凭据并由操作者审核；普通分支构建不会静默公开发布。
+
+## 运行 Harness Web UI
+
+同一份源码仍可直接启动未修改的 Harness Web 入口：
+
+```sh
 pnpm run build
 pnpm dsh web
 ```
 
-## 二次元桌面版
-
-本仓库还包含一个增量式 Electron 桌面体验，并在外层提供二次元角色界面。官方 Harness profile、会话、插件和 Web UI 仍是产品核心。详见[二次元桌面版指南](docs/user/guide/anime-desktop.md)。
-
-```sh
-pnpm run dev:anime
-```
-
 ## 社区与支持
 
-- 欢迎通过 [GitHub Discussions](https://github.com/deepseek-ai/deepseek-harness/discussions) 提交反馈或 bug 报告。
+- 欢迎通过[本仓库的 Issues](https://github.com/CheshireMew/dsh-Lumi/issues)提交 Lumi 反馈或 bug 报告。
 - 为你的插件仓库添加 [`dsh-plugin`](https://github.com/topics/dsh-plugin) 话题，便于被发现。
 - 欢迎加入 DeepSeek Harness 企微群：扫码添加企微小助手并填写入群问卷，完成后小助手会邀请你入群。
 

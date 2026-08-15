@@ -1,18 +1,27 @@
 {
   "name": "@deepseek-ai/dsh-root",
+  "description": "Lumi Windows desktop experience built as an additive DeepSeek Harness plugin composition",
   "version": "0.1.0-rc.5",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CheshireMew/dsh-Lumi.git"
+  },
+  "homepage": "https://github.com/CheshireMew/dsh-Lumi#readme",
+  "bugs": {
+    "url": "https://github.com/CheshireMew/dsh-Lumi/issues"
+  },
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "engines": {
-    "node": "^22.19.0 || >=24.0.0"
+    "node": "^22.19.0"
   },
   "devEngines": {
     "runtime": {
       "name": "node",
       "version": "22.23.2",
-      "onFail": "download"
+      "onFail": "error"
     }
   },
   "workspaces": [
@@ -24,21 +33,23 @@
     "website"
   ],
   "scripts": {
-    "build": "npm run build:lib && npm run build:web",
+    "build": "npm run build:lib && npm run build:web && npm run build:desktop",
     "build:lib": "npm run build:lib:host && npm run build:lib:client",
     "build:lib:host": "tsc -b tsconfig.host.json && tsdown --env.DSH_BUILD_FACE host",
     "build:lib:client": "tsc -b tsconfig.client.json && tsdown --env.DSH_BUILD_FACE client",
     "build:web": "pnpm --filter @deepseek-ai/dsh-web-frontend run build",
-    "build:anime": "pnpm run build && pnpm --filter @dsh-anime/desktop run build",
-    "dev:anime": "tsx scripts/dev-anime.ts",
-    "start:anime": "pnpm --filter @dsh-anime/desktop run start",
-    "compat:anime": "vitest run apps/cli/tests/profile-boot.spec.ts apps/cli/tests/profile-boot-anchor.compat.spec.ts packages/client/ui-layout/tests packages/client/anime-character/tests packages/client/anime-shell/tests apps/desktop/tests",
-    "test:anime": "pnpm run compat:anime && pnpm --filter @dsh-anime/desktop run test:e2e",
+    "build:lumi": "npm run build",
+    "dev:lumi": "tsx scripts/dev-lumi.ts",
+    "start:lumi": "pnpm --filter @dsh-lumi/desktop run start",
+    "compat:lumi": "vitest run apps/cli/tests/profile-boot.spec.ts apps/cli/tests/profile-boot-anchor.compat.spec.ts packages/client/ui-layout/tests packages/client/lumi-character/tests packages/client/lumi-shell/tests apps/desktop/tests",
+    "test:lumi": "pnpm run compat:lumi && pnpm --filter @dsh-lumi/desktop run test:e2e",
+    "dist:lumi:windows": "pnpm --filter @dsh-lumi/desktop run dist:windows",
+    "publish:lumi:windows": "pnpm --filter @dsh-lumi/desktop run publish:windows",
     "sync:upstream": "tsx scripts/sync-upstream.ts --sync",
-    "build:desktop": "pnpm run build:anime",
-    "dev:desktop": "pnpm run dev:anime",
-    "start:desktop": "pnpm run start:anime",
-    "test:desktop": "pnpm run test:anime",
+    "build:desktop": "pnpm --filter @dsh-lumi/desktop run build",
+    "dev:desktop": "pnpm run dev:lumi",
+    "start:desktop": "pnpm run start:lumi",
+    "test:desktop": "pnpm run test:lumi",
     "upstream:status": "tsx scripts/sync-upstream.ts",
     "upstream:fetch": "tsx scripts/sync-upstream.ts --fetch",
     "upstream:rebase": "tsx scripts/sync-upstream.ts --rebase",
@@ -114,6 +125,7 @@
     "website:dev": "pnpm run docs:dev",
     "website:build": "pnpm run docs:build",
     "verify-package-readme-limitations": "tsx scripts/verify-package-readme-limitations.ts",
+    "verify-lumi-release": "tsx scripts/verify-lumi-release.ts",
     "verify-node-next-types": "tsx scripts/verify-node-next-types.ts",
     "verify-runtime-closure": "tsx scripts/verify-runtime-closure.ts",
     "verify-vendored-links": "tsx scripts/verify-vendored-links.ts",

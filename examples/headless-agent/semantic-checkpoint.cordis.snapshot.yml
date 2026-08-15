@@ -17,14 +17,30 @@
     file: !!js process.env.DSH_SNAPSHOT_FILE
     overrideFile: !!js process.env.DSH_SNAPSHOT_OVERRIDE
 
-# Managed child-process groups for the bash executor (spawn/kill/output plumbing).
+# Managed child-process groups for the host-native shell executor
+# (spawn/kill/output plumbing).
 - id: subprocess
   name: '@deepseek-ai/dsh-subprocess-local'
 
 - id: bash
   name: '@deepseek-ai/dsh-bash-local'
+  disabled: !!js process.platform === 'win32'
   config:
     timeoutMs: 60000
+
+- id: pwsh
+  name: '@deepseek-ai/dsh-pwsh-local'
+  disabled: !!js process.platform !== 'win32'
+  config:
+    timeoutMs: 60000
+
+- id: shell-env-pwsh
+  name: '@deepseek-ai/dsh-shell-env'
+  disabled: !!js process.platform !== 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
 
 - id: agent
   name: '@deepseek-ai/dsh-agent-spine-demo'
@@ -34,6 +50,7 @@
     skills:
       enabled: false
     toolJobs: false
+    toolBash: !!js "process.platform === 'win32' ? false : {}"
     goals: false
 
 # Await the persisted resume before the headless driver inspects root agents.

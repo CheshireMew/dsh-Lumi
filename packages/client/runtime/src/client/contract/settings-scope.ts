@@ -48,10 +48,15 @@ export interface SettingsScopeSpec<T> {
   decode?: (section: unknown) => T | undefined
 }
 
+/** One field-level change in an atomic namespace mutation. */
+export type SettingsScopeMutation =
+  | { readonly op: 'set'; readonly field: string; readonly value: unknown }
+  | { readonly op: 'unset'; readonly field: string }
+
 /**
  * Reactive owner handle over one namespace's durable section — the browser
  * mirror of the Host-side `SettingsScope` owner seam. Domain services read
- * and observe the snapshot and route explicit user choices through `set`.
+ * and observe the snapshot and route explicit user choices through mutations.
  */
 export interface SettingsScope<T> {
   /** @returns the current sync snapshot (stable reference until the next change). */
@@ -62,6 +67,14 @@ export interface SettingsScope<T> {
    * @returns the disposer removing this listener.
    */
   subscribe(listener: () => void): () => void
+  /**
+   * Queue one atomic namespace mutation. Its field operations share one Host
+   * revision and either publish together or are all rejected. An empty list is
+   * a settled no-op.
+   * @param operations - ordered field changes sent in one Host request.
+   * @returns settlement after the write and any latest-write recovery read.
+   */
+  mutate(operations: readonly SettingsScopeMutation[]): Promise<void>
   /**
    * Queue one field write. Rapid writes preserve mutation order, each carries
    * the latest known namespace revision, and only the latest settlement may

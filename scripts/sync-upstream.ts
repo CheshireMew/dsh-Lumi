@@ -136,9 +136,9 @@ export function renderSyncReport(
     '',
     '## Manual checks',
     '',
-    '- Open the official Web profile without the Anime bundle and compare the default frame.',
-    '- Open scene and work modes in the Anime profile and inspect sidebar, conversation, details, and overlays.',
-    '- Complete the Windows real-model workflow documented in the Anime desktop user guide.',
+    '- Open the official Web profile without the Lumi bundle and compare the default frame.',
+    '- Open scene and work modes in the Lumi profile and inspect sidebar, conversation, details, and overlays.',
+    '- Complete the Windows real-model workflow documented in the Lumi desktop user guide.',
   ]
   return `${lines.join('\n')}\n`
 }
@@ -209,12 +209,12 @@ function synchronize(): void {
   const upstreamFiles = previousBase === nextBase ? [] : git(['diff', '--name-only', `${previousBase}..${nextBase}`]).split('\n').filter(Boolean)
   const touchedSeams = config.highConflictFiles.filter(path => upstreamFiles.includes(path))
   const checks = [
-    runCheck('Anime extension contracts', ['run', 'compat:anime']),
-    runCheck('Anime source build', ['run', 'build:anime']),
+    runCheck('Lumi extension contracts', ['run', 'compat:lumi']),
+    runCheck('Lumi source build', ['run', 'build:lumi']),
     runCheck('Official GUI suite', ['run', 'test:gui']),
     runCheck('Official Web replay', ['run', 'test:web'], { DSH_SNAPSHOT: 'replay' }),
     runCheck('Official repository checks', ['run', 'check:all']),
-    runCheck('Electron smoke', ['--filter', '@dsh-anime/desktop', 'run', 'test:e2e:built']),
+    runCheck('Electron smoke', ['--filter', '@dsh-lumi/desktop', 'run', 'test:e2e:built']),
   ]
   const report = writeSyncReport(date, branch, previousBase, nextBase, changes, touchedSeams, checks)
   writeBaseRecord(nextBase, checks)

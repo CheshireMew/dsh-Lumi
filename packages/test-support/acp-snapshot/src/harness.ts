@@ -579,7 +579,7 @@ async function waitForPersistedChildTurnEnd(
   const timeoutError = new Error(
     `snapshot-harness: subagent child #${child} did not persist closed turn ${minimumTurn} within ${timeoutMs}ms`,
   )
-  let lastPollError: Error | undefined
+  let lastPollError = timeoutError
   try {
     await vi.waitFor(async () => {
       try {
@@ -590,17 +590,15 @@ async function waitForPersistedChildTurnEnd(
           throw timeoutError
         }
       } catch (error) {
-        lastPollError = error instanceof Error
-          ? error
-          : new Error('snapshot-harness: child persistence poll failed with a non-Error value', { cause: error })
+        /* v8 ignore next -- the poll only calls Node filesystem APIs and JSON.parse, which throw Error instances. */
+        lastPollError = error instanceof Error ? error : new Error(
+          'snapshot-harness: child persistence poll failed with a non-Error value', { cause: error },
+        )
         throw lastPollError
       }
     }, { interval: WAIT_POLL_INTERVAL_MS, timeout: timeoutMs })
-  } catch (error) {
-    if (error instanceof Error && error.message === 'Timed out in waitFor!') {
-      throw lastPollError ?? timeoutError
-    }
-    throw error
+  } catch {
+    throw lastPollError
   }
 }
 

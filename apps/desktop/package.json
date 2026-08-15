@@ -1,6 +1,6 @@
 {
-  "name": "@dsh-anime/desktop",
-  "description": "Electron desktop host for the DeepSeek Harness anime experience",
+  "name": "@dsh-lumi/desktop",
+  "description": "Signed Windows desktop host for the Lumi experience",
   "version": "0.1.0-rc.5",
   "private": true,
   "type": "module",
@@ -10,22 +10,27 @@
     "dev": "pnpm run build && electron .",
     "start": "electron .",
     "test": "pnpm --workspace-root exec vitest run apps/desktop/tests",
-    "test:e2e": "pnpm --workspace-root run build:anime && pnpm run test:e2e:built",
-    "test:e2e:built": "tsx e2e/desktop.e2e.ts"
+    "test:e2e": "pnpm --workspace-root run build:lumi && pnpm run test:e2e:built",
+    "test:e2e:built": "tsx e2e/desktop.e2e.ts",
+    "dist:windows": "pnpm --workspace-root run build:lumi && electron-builder --win nsis --publish never",
+    "publish:windows": "pnpm --workspace-root run build:lumi && electron-builder --win nsis --publish always"
   },
   "license": "MIT",
   "dependencies": {
     "@deepseek-ai/dsh": "workspace:^",
     "@deepseek-ai/dsh-app-boot": "workspace:^",
+    "@deepseek-ai/dsh-atomic-write": "workspace:^",
     "@deepseek-ai/dsh-base": "workspace:^",
     "@deepseek-ai/dsh-home-paths": "workspace:^",
     "@deepseek-ai/dsh-host-webserver": "workspace:^",
     "@deepseek-ai/dsh-web-app": "workspace:^",
-    "@dsh-anime/bundle-desktop": "workspace:^"
+    "@dsh-lumi/bundle-desktop": "workspace:^",
+    "electron-updater": "6.8.9"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
     "electron": "43.4.0",
+    "electron-builder": "26.15.3",
     "playwright": "^1.49.0",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",
@@ -34,5 +39,51 @@
   "files": [
     "lib",
     "assets"
-  ]
+  ],
+  "build": {
+    "appId": "io.github.cheshiremew.lumi",
+    "productName": "Lumi",
+    "artifactName": "Lumi-Setup-${version}-${arch}.${ext}",
+    "asar": true,
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "files": [
+      "lib/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.svg",
+      "forceCodeSigning": true,
+      "verifyUpdateCodeSignature": true
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Lumi",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "CheshireMew",
+        "repo": "dsh-Lumi",
+        "releaseType": "draft"
+      }
+    ]
+  }
 }

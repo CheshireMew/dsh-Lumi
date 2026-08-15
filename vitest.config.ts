@@ -196,6 +196,15 @@ export default defineConfig({
         'packages/client/ui-workspace/src/client/WorkspaceBrowser.tsx',
         'packages/client/ui-workspace/src/client/WorkspacePicker.tsx',
         'packages/client/web-react/src/*',
+        // Lumi's browser runtime and React surfaces are exercised by the
+        // dedicated jsdom compatibility suite, visual matrix, browser stress,
+        // and assembled Electron E2E. The generic unit coverage lane cannot
+        // represent its browser media, animation, or slot-composition paths.
+        'packages/client/lumi-character/src/client/*',
+        'packages/client/lumi-shell/src/client/*',
+        // The Host entry is composition glue over settings and the pack
+        // catalog; those owned implementations remain in the denominator.
+        'packages/client/lumi-character/src/index.ts',
         // This isolated settings-scope lifecycle has complete unit coverage;
         // keep it out of the broader client-runtime GUI debt exemption.
         'packages/client/runtime/src/**/!(settings-scope).ts',

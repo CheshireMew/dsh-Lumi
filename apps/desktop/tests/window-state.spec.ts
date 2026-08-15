@@ -18,7 +18,7 @@ describe('desktop window placement', () => {
   })
 
   it('reads and atomically replaces the desktop-owned JSON document', () => {
-    const path = join(mkdtempSync(join(tmpdir(), 'dsh-anime-window-')), 'state.json')
+    const path = join(mkdtempSync(join(tmpdir(), 'dsh-lumi-window-')), 'state.json')
     const first = { x: 12, y: 34, width: 900, height: 640, maximized: false }
     const second = { ...first, width: 1200, maximized: true }
     writeWindowPlacement(path, first)

@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-14-lumi-electron-product-layer.md
+2026-08-14-lumi-electron-product-layer.md: b0e2932ee4945437bd4c1feb519220192885c788
+2026-08-14-lumi-electron-product-layer.zh.md: c53f2da854ad18d204c8f75185c0be479037eea1

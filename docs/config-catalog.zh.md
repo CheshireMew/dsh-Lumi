@@ -3092,9 +3092,9 @@ export interface Config {
 - `@deepseek-ai/dsh-tool-subagent-control` — 需要 `tools` · `subagents`（[`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts)）
 - `@deepseek-ai/dsh-user-questions`（[`packages/interaction/user-questions/src/index.ts`](../packages/interaction/user-questions/src/index.ts)）
 - `@deepseek-ai/dsh-workspace` — 需要 `storageDomain` · `sessionPersistence`（[`packages/workspace/workspace/src/index.ts`](../packages/workspace/workspace/src/index.ts)）
-- `@dsh-anime/bundle-desktop`（[`packages/bundle/anime-desktop/src/index.ts`](../packages/bundle/anime-desktop/src/index.ts)）
-- `@dsh-anime/client-character`（[`packages/client/anime-character/src/index.ts`](../packages/client/anime-character/src/index.ts)）
-- `@dsh-anime/client-shell`（[`packages/client/anime-shell/src/index.ts`](../packages/client/anime-shell/src/index.ts)）
+- `@dsh-lumi/bundle-desktop`（[`packages/bundle/lumi-desktop/src/index.ts`](../packages/bundle/lumi-desktop/src/index.ts)）
+- `@dsh-lumi/client-character`（[`packages/client/lumi-character/src/index.ts`](../packages/client/lumi-character/src/index.ts)）
+- `@dsh-lumi/client-shell`（[`packages/client/lumi-shell/src/index.ts`](../packages/client/lumi-shell/src/index.ts)）
 
 ## Seam 包（不可直接加载）
 

@@ -6,7 +6,7 @@ import { initProfile, loadProfile, resolveProfileDir } from '@deepseek-ai/dsh-ap
 
 const BASE = '@deepseek-ai/dsh-base'
 const WEB = '@deepseek-ai/dsh-web-app'
-const ANIME = '@dsh-anime/bundle-desktop'
+const LUMI = '@dsh-lumi/bundle-desktop'
 
 describe('profile boot real install anchors', () => {
   it('resolves the official Web bundle stack from the CLI installation anchor', () => {
@@ -21,9 +21,9 @@ describe('profile boot real install anchors', () => {
   it('resolves base, Web, and the custom desktop bundle from the Electron anchor', () => {
     const home = mkdtempSync(join(tmpdir(), 'dsh-desktop-anchor-'))
     const anchor = resolve('apps/desktop/package.json')
-    initProfile(resolveProfileDir('anime-desktop', home), [BASE, WEB, ANIME])
-    const profile = loadProfile('dsh', 'anime-desktop', anchor, home)
-    expect(profile.layers.map(layer => layer.packageName)).toEqual([BASE, WEB, ANIME])
+    initProfile(resolveProfileDir('lumi-desktop', home), [BASE, WEB, LUMI])
+    const profile = loadProfile('dsh', 'lumi-desktop', anchor, home)
+    expect(profile.layers.map(layer => layer.packageName)).toEqual([BASE, WEB, LUMI])
     expect(profile.layers.map(layer => basename(layer.patchPath))).toEqual([
       'cordis.patch.yml',
       'cordis.patch.yml',

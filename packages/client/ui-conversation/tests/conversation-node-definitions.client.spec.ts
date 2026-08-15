@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   ChatConversationViewNode, ChatSnapshot, ConversationEventInput,
   ConversationNodeDefinition, ConversationViewDefinition,
@@ -118,6 +118,36 @@ function toolResult(callId: string, text: string) {
 }
 
 describe('built-in conversation node Definitions', () => {
+  it('does not rescan accumulated visible Assistant text for later deltas', () => {
+    const value = assembler([
+      at(1, 'turn/start', { turn: 1 }),
+      at(2, 'step/start', { turn: 1, step: 1 }),
+      at(3, 'assistant/chunk', {
+        turn: 1,
+        step: 1,
+        chunk: { type: 'reasoning-delta', index: 0, text: 'visible' },
+      }),
+    ])
+    const trim = vi.spyOn(String.prototype, 'trim')
+    try {
+      for (let seq = 4; seq < 260; seq++) {
+        value.append(at(seq, 'assistant/chunk', {
+          turn: 1,
+          step: 1,
+          chunk: { type: 'reasoning-delta', index: 0, text: 'x' },
+        }))
+      }
+      expect(trim).not.toHaveBeenCalled()
+    } finally {
+      trim.mockRestore()
+    }
+    value.flush()
+    expect((node(snapshot(value), 'assistant-step')?.data as AssistantChatData).blocks).toEqual([{
+      kind: 'reasoning',
+      text: `visible${'x'.repeat(256)}`,
+    }])
+  })
+
   it('keeps one keyed Assistant node while streaming settles and materializes interruption from Location', () => {
     const value = assembler([
       at(1, 'turn/start', { turn: 1 }),

@@ -37,6 +37,7 @@ const LEGACY_LABELS = new Set([
 ])
 const TERMINAL_STATUSES = new Set(['Done', 'No action'])
 const ACTIVE_STATUS_ORDER = config.statuses.filter((status) => !TERMINAL_STATUSES.has(status))
+const PROJECT_ENABLED = Number.isInteger(config.projectNumber) && config.projectNumber > 0
 const IMPLEMENTATION_PULL_REQUEST_ACTIONS = new Set([
   'opened',
   'edited',
@@ -46,11 +47,13 @@ const IMPLEMENTATION_PULL_REQUEST_ACTIONS = new Set([
   'unlabeled',
 ])
 
-for (const status of ['In progress', 'In review']) {
-  if (!ACTIVE_STATUS_ORDER.includes(status)) throw new Error(`config.statuses 缺少 ${status}`)
-}
-if (typeof config.lifecycleActor !== 'string' || !config.lifecycleActor) {
-  throw new Error('config.lifecycleActor 未设置')
+if (PROJECT_ENABLED) {
+  for (const status of ['In progress', 'In review']) {
+    if (!ACTIVE_STATUS_ORDER.includes(status)) throw new Error(`config.statuses 缺少 ${status}`)
+  }
+  if (typeof config.lifecycleActor !== 'string' || !config.lifecycleActor) {
+    throw new Error('启用 Project 生命周期时必须设置 config.lifecycleActor')
+  }
 }
 
 /**
@@ -195,9 +198,15 @@ export function resolvingIssueStatusCommand(eventName, event) {
  * @param {string|null} currentStatus Current Project status.
  * @param {'implementation'|'review-requested'|'changes-requested'} command Lifecycle command.
  * @param {string|null} currentStatusActor Actor that last set the current Project status.
+ * @param {string|null} lifecycleActor Actor allowed to reverse an automated review transition.
  * @returns {string|null} Status to write, or null when no permitted transition exists.
  */
-export function nextResolvingIssueStatus(currentStatus, command, currentStatusActor = null) {
+export function nextResolvingIssueStatus(
+  currentStatus,
+  command,
+  currentStatusActor = null,
+  lifecycleActor = config.lifecycleActor,
+) {
   let target
   if (command === 'review-requested') target = 'In review'
   else if (command === 'implementation' || command === 'changes-requested') target = 'In progress'
@@ -208,7 +217,8 @@ export function nextResolvingIssueStatus(currentStatus, command, currentStatusAc
   if (
     command === 'changes-requested' &&
     currentStatus === 'In review' &&
-    currentStatusActor === config.lifecycleActor
+    typeof lifecycleActor === 'string' &&
+    currentStatusActor === lifecycleActor
   ) {
     return target
   }
@@ -283,9 +293,10 @@ export function retainIssueReferences(references, issues) {
 /**
  * Validate one Issue with its Project status.
  * @param {{title: string, body: string, assignees: string[], labels: string[], type: string|null, priority: string|null, status: string|null, state: string, stateReason: string|null}} issue Issue snapshot.
+ * @param {boolean} [projectEnabled] Whether Project-owned fields are required.
  * @returns {string[]} Validation errors.
  */
-export function validateIssue(issue) {
+export function validateIssue(issue, projectEnabled = PROJECT_ENABLED) {
   const errors = validateBody(issue)
   const status = issue.status
   const invalidLabels = issue.labels.filter(
@@ -303,6 +314,7 @@ export function validateIssue(issue) {
   ) {
     errors.push('Issue 标题不得带 Type、Priority、Status、area 或 Owner 前缀')
   }
+  if (!projectEnabled) return errors
   if (!TYPES.has(issue.type ?? '')) errors.push('Type 必须是五种原生英文 Type 之一')
   if (!status || !config.statuses.includes(status)) errors.push('Issue 必须在 Project 中且具有合法 Status')
   if (issue.priority !== null && !PRIORITIES.includes(issue.priority.toLowerCase())) {
@@ -418,9 +430,9 @@ async function graphql(query, variables) {
 async function issueSnapshot(number, status = undefined) {
   const issue = await api(`/repos/${config.organization}/${config.repository}/issues/${number}`)
   if (issue.pull_request) return null
-  const values = await api(
-    `/repos/${config.organization}/${config.repository}/issues/${number}/issue-field-values?per_page=100`,
-  )
+  const values = PROJECT_ENABLED
+    ? await api(`/repos/${config.organization}/${config.repository}/issues/${number}/issue-field-values?per_page=100`)
+    : []
   const field = (name) => values.find((value) => value.issue_field_name === name)
   return {
     number,
@@ -431,13 +443,14 @@ async function issueSnapshot(number, status = undefined) {
     labels: issue.labels.map((label) => label.name),
     type: issue.type?.name ?? null,
     priority: field(config.priorityField)?.single_select_option?.name ?? null,
-    status: status === undefined ? await projectStatus(number) : status,
+    status: PROJECT_ENABLED && status === undefined ? await projectStatus(number) : status ?? null,
     state: issue.state,
     stateReason: issue.state_reason ?? null,
   }
 }
 
 async function projectContext(number, includeStatusActor = false) {
+  if (!PROJECT_ENABLED) throw new Error('当前仓库未配置 GitHub Project 生命周期')
   const data = await graphql(
     `query(
       $organization: String!
@@ -663,6 +676,7 @@ async function runPullRequestCheck(event) {
 }
 
 async function runLifecycle(eventName, event) {
+  if (!PROJECT_ENABLED) throw new Error('当前仓库未配置 GitHub Project 生命周期')
   if (eventName === 'issues') {
     const number = event.issue.number
     if (event.action === 'opened') await setStatus(number, 'Inbox')
@@ -686,6 +700,11 @@ async function runLifecycle(eventName, event) {
   }
 }
 
+async function runIssueAudit(eventName, event) {
+  if (eventName !== 'issues') return
+  await auditIssue(event.issue.number)
+}
+
 function readEvent() {
   if (!process.env.GITHUB_EVENT_PATH) throw new Error('GITHUB_EVENT_PATH 未设置')
   return JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'))
@@ -694,8 +713,9 @@ function readEvent() {
 async function main(argv) {
   const [command] = argv
   if (command === 'pr') await runPullRequestCheck(readEvent())
+  else if (command === 'audit') await runIssueAudit(process.env.GITHUB_EVENT_NAME, readEvent())
   else if (command === 'lifecycle') await runLifecycle(process.env.GITHUB_EVENT_NAME, readEvent())
-  else throw new Error('用法：policy.mjs pr|lifecycle')
+  else throw new Error('用法：policy.mjs pr|audit|lifecycle')
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

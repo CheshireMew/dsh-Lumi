@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -16,15 +16,15 @@ on:
           - consolidated-runner-benchmark
 
 # Cancel a superseded run on every event EXCEPT push. A push run carries the two
-# self-hosted standby drills, which take longer than the interval between master
+# self-hosted standby drills, which take longer than the interval between main
 # merges, so cancelling supersedes a drill before it reaches a verdict and the
 # lane yields no readiness evidence. Must be decided here: cancellation applies
 # to the whole superseded run, so a job-level group cannot exempt its job.
 # Negated rather than `== 'pull_request'` so workflow_dispatch keeps cancelling:
 # a re-dispatched runner benchmark holds up to 12 larger runners for 15 minutes
-# and shares this group with the drills on master, so queueing it would delay
+# and shares this group with the drills on main, so queueing it would delay
 # them. The guarantee is narrow — evaluated against the newly triggered run, so a
-# dispatch on master still cancels a mid-flight drill, and a newer pending push
+# dispatch on main still cancels a mid-flight drill, and a newer pending push
 # displaces an older one. Bounds and rationale:
 # .agents/notes/implemented/process/2026-07-26-ci-failover-runbook.md
 concurrency:
@@ -35,7 +35,7 @@ permissions:
   contents: read
 
 env:
-  PRIMARY_NODE_VERSION: '24'
+  PRIMARY_NODE_VERSION: '22.23.2'
   # CI runs must never report to the production telemetry endpoint baked
   # into apps/cli/cordis.yml (AppCLIEntry disables the row when set).
   DSH_TELEMETRY_DISABLED: '1'
@@ -43,7 +43,7 @@ env:
 jobs:
 
   # TODO(hosted-serial-ci): Re-enable the three hosted serial reference jobs before release.
-  # The self-hosted standby remains active on every master push.
+  # The self-hosted standby remains active on every main push.
 
   # Three enterprise jobs isolate coverage, static analysis, and the
   # build-backed consumer tail. The consumer job owns the only Linux build so
@@ -57,17 +57,17 @@ jobs:
   # three onto the in-house
   # vm-backup pool and re-running the failed jobs is the entire switch —
   # see .agents/notes/implemented/process/2026-07-26-ci-failover-runbook.md. The
-  # in-house pool's readiness is re-proven on every master push by the
+  # in-house pool's readiness is re-proven on every main push by the
   # serial-linux-selfhosted standby lane below. The Windows failover switch is
   # the separate DSH_CI_FAILOVER_WINDOWS variable on the windows-native job below.
-  node-24:
+  node-22:
     if: github.event_name == 'pull_request'
     runs-on: >-
       ${{ vars.DSH_CI_FAILOVER_LINUX == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "linux", "x64", "vm-backup"]')
           || 'dsh-ubuntu-24-04-16core' }}
-    name: node 24 / static
+    name: node 22 / static
     env:
       DSH_GATE_CONCURRENCY: '8'
     steps:
@@ -112,14 +112,14 @@ jobs:
           DSH_ARCHIVE_BASE_REF: ${{ github.event.pull_request.base.sha }}
         run: pnpm run check:ci:static
 
-  node-24-coverage:
+  node-22-coverage:
     if: github.event_name == 'pull_request'
     runs-on: >-
       ${{ vars.DSH_CI_FAILOVER_LINUX == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "linux", "x64", "vm-backup"]')
           || 'dsh-ubuntu-24-04-16core' }}
-    name: node 24 / coverage
+    name: node 22 / coverage
     env:
       # The hosted 16-core runner uses six coverage workers. The failover pool
       # shares one 64-core VM across six always-on runner instances, so each
@@ -175,14 +175,14 @@ jobs:
       - name: Run exhaustive coverage
         run: pnpm run check:ci:coverage
 
-  node-24-consumers:
+  node-22-consumers:
     if: github.event_name == 'pull_request'
     runs-on: >-
       ${{ vars.DSH_CI_FAILOVER_LINUX == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "linux", "x64", "vm-backup"]')
           || 'dsh-ubuntu-24-04-16core' }}
-    name: node 24 / snapshots and artifacts
+    name: node 22 / snapshots and artifacts
     env:
       DSH_GATE_CONCURRENCY: '8'
       DSH_NODE_COMPAT_SKIP_TYPECHECK: '1'
@@ -273,10 +273,6 @@ jobs:
             name: node 22.19
             runner: ubuntu-latest
             gate_concurrency: '1'
-          - node: 26
-            name: node 26
-            runner: ubuntu-latest
-            gate_concurrency: '1'
     steps:
       - uses: actions/checkout@v6
 
@@ -322,8 +318,41 @@ jobs:
     name: python runtime / release-shaped Linux x64
     uses: ./.github/workflows/build-exe-for-python-sdk.yml
     with:
-      targets: node24-linux-x64
+      targets: node22-linux-x64
       ci: true
+
+  lumi-windows:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    name: Lumi desktop / Windows end-to-end
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Lumi compatibility and real Electron tests
+        run: pnpm run test:lumi
+
+      - name: Upload Lumi acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumi-windows-evidence
+          path: artifacts/qa/
+          if-no-files-found: error
 
   # The required pull-request Windows signal: the two blocking win32 surfaces
   # (workspace build, production site) execute with real, checksum-verified
@@ -338,7 +367,7 @@ jobs:
   windows:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    name: windows node 24 / wine blocking
+    name: windows node 22 / wine blocking
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -410,7 +439,7 @@ jobs:
   # pull-request runs are scoped to their own merge ref and help nobody
   # else. Runs in seconds when the image version already has a cache.
   wine-apt-cache:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     name: wine apt cache
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -451,7 +480,7 @@ jobs:
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "dsh-win-ci", "windows"]')
           || 'dsh-windows-2025-16core' }}
-    name: windows node 24 / native complete
+    name: windows node 22 / native complete
     timeout-minutes: 60
     env:
       DSH_COVERAGE_MAX_WORKERS: '2'
@@ -572,7 +601,7 @@ jobs:
   # tool caches make them redundant (and saving here would poison the hosted
   # cache namespace with self-hosted paths).
   serial-linux-selfhosted:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     name: serial / linux (self-hosted standby)
     runs-on: [self-hosted, linux, x64, vm-backup]
     steps:
@@ -656,7 +685,7 @@ jobs:
   # and tool caches make them redundant (and saving here would poison the
   # hosted cache namespace with self-hosted paths).
   serial-windows:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     name: serial / windows (self-hosted standby)
     runs-on: [self-hosted, dsh-win-ci, windows]
     timeout-minutes: 60
@@ -925,7 +954,7 @@ jobs:
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "linux", "x64", "vm-backup"]')
           || 'ubuntu-latest' }}
-    needs: [node-24, node-24-coverage, node-24-consumers, node-compat, python-sdk, python-runtime, windows]
+    needs: [node-22, node-22-coverage, node-22-consumers, node-compat, python-sdk, python-runtime, lumi-windows, windows]
     if: always() && github.event_name == 'pull_request'
     steps:
       - name: Fail if any needed job did not succeed

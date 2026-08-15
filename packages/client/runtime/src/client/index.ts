@@ -50,7 +50,7 @@ export { resolveWorkspacePath } from './workspaces/path.ts'
 // Contract only: the scope implementation and its Host transport belong to
 // dsh-client-ui-settings (see that package's settings-scope.ts).
 export type {
-  SettingsScope, SettingsScopeSnapshot, SettingsScopeSpec,
+  SettingsScope, SettingsScopeMutation, SettingsScopeSnapshot, SettingsScopeSpec,
 } from './contract/settings-scope.ts'
 export type { Session } from './sessions/session.ts'
 export type { ISession, ProjectionsFace, SessionFace } from './contract/session.ts'

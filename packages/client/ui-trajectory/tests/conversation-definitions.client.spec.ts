@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   ConversationEventInput, ConversationNodeDefinition, ConversationViewDefinition,
 } from '@deepseek-ai/dsh-client-runtime/client'
@@ -88,6 +88,36 @@ function assistantMessage(id: string, text: string) {
 }
 
 describe('Trajectory conversation Definitions', () => {
+  it('does not rescan accumulated visible Assistant text for later deltas', () => {
+    const value = assembler([
+      at(1, 'turn/start', { turn: 1 }),
+      at(2, 'step/start', { turn: 1, step: 1 }),
+      at(3, 'assistant/chunk', {
+        turn: 1,
+        step: 1,
+        chunk: { type: 'reasoning-delta', index: 0, text: 'visible' },
+      }),
+    ])
+    const trim = vi.spyOn(String.prototype, 'trim')
+    try {
+      for (let seq = 4; seq < 260; seq++) {
+        value.append(at(seq, 'assistant/chunk', {
+          turn: 1,
+          step: 1,
+          chunk: { type: 'reasoning-delta', index: 0, text: 'x' },
+        }))
+      }
+      expect(trim).not.toHaveBeenCalled()
+    } finally {
+      trim.mockRestore()
+    }
+    value.flush()
+    expect(snapshot(value).partial?.blocks).toEqual([{
+      kind: 'reasoning',
+      text: `visible${'x'.repeat(256)}`,
+    }])
+  })
+
   it('assembles streaming usage, preserves retry facts, and materializes interruption', () => {
     const value = assembler([
       at(1, 'turn/start', { turn: 1 }),

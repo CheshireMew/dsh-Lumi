@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
@@ -13,9 +13,14 @@ const repositoryRoot = resolve(desktopRoot, '..', '..')
 const artifacts = join(repositoryRoot, 'artifacts', 'qa')
 const home = join(artifacts, 'desktop-e2e-home')
 const userData = join(home, 'electron-user-data')
-const screenshot = join(artifacts, 'anime-desktop.png')
-const narrowScreenshot = join(artifacts, 'anime-desktop-narrow.png')
+const screenshot = join(artifacts, 'lumi-desktop.png')
+const narrowScreenshot = join(artifacts, 'lumi-desktop-narrow.png')
 mkdirSync(artifacts, { recursive: true })
+mkdirSync(userData, { recursive: true })
+writeFileSync(
+  join(userData, 'lumi-window-state.json'),
+  `${JSON.stringify({ x: 80, y: 80, width: 1440, height: 920, maximized: false })}\n`,
+)
 
 const electronExecutable = createRequire(import.meta.url)('electron') as string
 
@@ -48,12 +53,12 @@ async function waitForSecondInstanceExit(child: ReturnType<typeof spawn>): Promi
 }
 
 const application = await electron.launch({
-  args: ['.', `--user-data-dir=${userData}`],
+  args: ['.', `--user-data-dir=${userData}`, '--force-device-scale-factor=1.25'],
   cwd: desktopRoot,
   env: {
     ...process.env,
     DSH_HOME: home,
-    ELECTRON_CACHE: process.env.ELECTRON_CACHE ?? 'D:\\Tools\\electron-cache',
+    ELECTRON_CACHE: process.env.ELECTRON_CACHE ?? join(home, 'electron-cache'),
   },
   timeout: 90_000,
 })
@@ -63,7 +68,7 @@ let finalPort: number | undefined
 
 async function harnessProcesses(): Promise<Array<{ pid: number; serviceName?: string }>> {
   return application.evaluate(({ app }) => app.getAppMetrics()
-    .filter(metric => metric.type === 'Utility' && metric.name === 'DeepSeek Harness')
+    .filter(metric => metric.type === 'Utility' && metric.name === 'Lumi Harness')
     .map(metric => ({ pid: metric.pid, serviceName: metric.serviceName })))
 }
 
@@ -78,7 +83,7 @@ async function waitForHarnessProcess(excludedPid?: number): Promise<{ pid: numbe
 
 async function killHarnessProcess(): Promise<number> {
   return application.evaluate(({ app }) => {
-    const metric = app.getAppMetrics().find(candidate => candidate.type === 'Utility' && candidate.name === 'DeepSeek Harness')
+    const metric = app.getAppMetrics().find(candidate => candidate.type === 'Utility' && candidate.name === 'Lumi Harness')
     if (metric === undefined) throw new Error('Harness utility process is missing')
     process.kill(metric.pid)
     return metric.pid
@@ -98,7 +103,7 @@ function recordHarnessUrl(url: string): number {
 try {
   const page = await application.firstWindow()
   await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\//u, { timeout: 90_000 })
-  await page.locator('[data-desktop="true"] [data-anime-conversation]').waitFor({ timeout: 90_000 })
+  await page.locator('[data-desktop="true"] [data-lumi-conversation]').waitFor({ timeout: 90_000 })
   const initialPort = recordHarnessUrl(page.url())
   assert.equal(await portIsOpen(initialPort), true)
   assert.equal((await harnessProcesses()).length, 1)
@@ -133,11 +138,19 @@ try {
   assert.deepEqual(rendererBoundary.appKeys, ['openCharacterPacksFolder', 'openLogsFolder', 'restartHarness'])
   assert.deepEqual(rendererBoundary.windowKeys, ['close', 'getState', 'minimize', 'onStateChanged', 'toggleMaximize'])
   assert.equal(rendererBoundary.platform, 'win32')
+  assert.ok(await page.evaluate(() => window.devicePixelRatio) >= 1.2)
+  const bondProgress = page.getByRole('progressbar', { name: /(?:默契|Bond)/u })
+  await bondProgress.waitFor()
+  assert.equal(await bondProgress.getAttribute('aria-valuemin'), '0')
+  assert.equal(await bondProgress.getAttribute('aria-valuemax'), '100')
+  assert.equal(await page.getByRole('img', { name: /Lumi/u }).count(), 1)
+  assert.equal(await page.getByRole('button', { name: '场景模式' }).first().getAttribute('aria-pressed'), 'true')
+  assert.equal(await page.getByRole('button', { name: '工作模式' }).first().getAttribute('aria-pressed'), 'false')
 
   await page.evaluate(() => window.dshDesktop?.window.minimize())
   const secondInstance = spawn(electronExecutable, [desktopRoot, `--user-data-dir=${userData}`], {
     cwd: desktopRoot,
-    env: { ...process.env, DSH_HOME: home, ELECTRON_CACHE: process.env.ELECTRON_CACHE ?? 'D:\\Tools\\electron-cache' },
+    env: { ...process.env, DSH_HOME: home, ELECTRON_CACHE: process.env.ELECTRON_CACHE ?? join(home, 'electron-cache') },
     stdio: 'ignore',
   })
   assert.equal(await waitForSecondInstanceExit(secondInstance), 0)
@@ -170,15 +183,15 @@ try {
   await application.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.setSize(900, 640)
   })
-  await page.waitForFunction(() => window.innerWidth <= 900)
-  const animeSidebar = page.locator('[data-anime-sidebar]')
-  await animeSidebar.waitFor()
-  await page.waitForFunction(() => document.querySelector('[data-anime-sidebar]')?.getAttribute('data-collapsed') === 'true')
+  await page.waitForFunction(() => window.innerWidth <= 1099)
+  const lumiSidebar = page.locator('[data-lumi-sidebar]')
+  await lumiSidebar.waitFor()
+  await page.waitForFunction(() => document.querySelector('[data-lumi-sidebar]')?.getAttribute('data-collapsed') === 'true')
   // SidebarRoot keeps its prior width for a 150ms crossfade before the stable
   // icon rail replaces it. The acceptance screenshot must represent the
   // settled narrow layout, not the intentional transition frame.
   await page.waitForTimeout(250)
-  const sidebarBox = await animeSidebar.boundingBox()
+  const sidebarBox = await lumiSidebar.boundingBox()
   assert.ok(sidebarBox !== null && sidebarBox.width >= 55 && sidebarBox.width <= 57)
   await page.screenshot({ path: narrowScreenshot, fullPage: true })
 
@@ -190,7 +203,7 @@ try {
       value: Function('url', 'globalThis.__dshOpenedExternal.push(url); return Promise.resolve()'),
     })
   })
-  await page.evaluate(() => { window.open('https://example.com/anime-desktop-e2e', '_blank') })
+  await page.evaluate(() => { window.open('https://example.com/lumi-desktop-e2e', '_blank') })
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const opened = await application.evaluate(
       () => (globalThis as typeof globalThis & { __dshOpenedExternal?: string[] }).__dshOpenedExternal ?? [],
@@ -200,7 +213,7 @@ try {
   }
   assert.deepEqual(
     await application.evaluate(() => (globalThis as typeof globalThis & { __dshOpenedExternal?: string[] }).__dshOpenedExternal),
-    ['https://example.com/anime-desktop-e2e'],
+    ['https://example.com/lumi-desktop-e2e'],
   )
 
   const browserPagePromise = application.waitForEvent('window')
@@ -231,7 +244,7 @@ try {
     })
   })
   await browserPage.reload({ waitUntil: 'domcontentloaded' })
-  await browserPage.locator('[data-anime-conversation]').waitFor({ timeout: 30_000 })
+  await browserPage.locator('[data-lumi-conversation]').waitFor({ timeout: 30_000 })
   assert.equal(await browserPage.evaluate(() => window.dshDesktop), undefined)
   assert.equal(await browserPage.locator('[data-desktop="true"]').count(), 0)
   assert.equal(await browserPage.getByRole('button', { name: /(?:角色包|Character packs)/u }).count(), 0)
@@ -257,7 +270,7 @@ try {
     await page.waitForURL(/^file:/u, { timeout: 15_000 })
     await waitForHarnessProcess(oldPid)
     await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\//u, { timeout: 30_000 })
-    await page.locator('[data-desktop="true"] [data-anime-conversation]').waitFor({ timeout: 30_000 })
+    await page.locator('[data-desktop="true"] [data-lumi-conversation]').waitFor({ timeout: 30_000 })
     const nextPort = recordHarnessUrl(page.url())
     await waitForClosedPort(previousPort)
     previousPort = nextPort
@@ -270,7 +283,7 @@ try {
   await page.locator('#copy').getByText('已复制').waitFor()
   await page.locator('#restart').click()
   await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\//u, { timeout: 30_000 })
-  await page.locator('[data-desktop="true"] [data-anime-conversation]').waitFor({ timeout: 30_000 })
+  await page.locator('[data-desktop="true"] [data-lumi-conversation]').waitFor({ timeout: 30_000 })
   const recoveredPort = recordHarnessUrl(page.url())
   await waitForClosedPort(previousPort)
   assert.equal((await harnessProcesses()).length, 1)
@@ -286,10 +299,14 @@ try {
 
 assert.ok(finalPort !== undefined)
 await waitForClosedPort(finalPort)
-const placement = JSON.parse(readFileSync(join(userData, 'anime-window-state.json'), 'utf8')) as Record<string, unknown>
-assert.deepEqual(placement, { x: 80, y: 80, width: 1280, height: 720, maximized: false })
-assert.equal(existsSync(join(home, 'anime', 'packs')), true)
-const mainLog = join(home, 'logs', 'anime-desktop', `main-${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}.log`)
+const placement = JSON.parse(readFileSync(join(userData, 'lumi-window-state.json'), 'utf8')) as Record<string, unknown>
+assert.equal(placement['x'], 80)
+assert.equal(placement['y'], 80)
+assert.equal(placement['maximized'], false)
+assert.ok(typeof placement['width'] === 'number' && Math.abs(placement['width'] - 1280) <= 2)
+assert.ok(typeof placement['height'] === 'number' && Math.abs(placement['height'] - 720) <= 2)
+assert.equal(existsSync(join(home, 'lumi', 'packs')), true)
+const mainLog = join(home, 'logs', 'lumi-desktop', `main-${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}.log`)
 const log = readFileSync(mainLog, 'utf8')
 assert.match(log, /Harness ready at http:\/\/127\.0\.0\.1:\d+/u)
 assert.match(log, /Harness disconnected with code/u)

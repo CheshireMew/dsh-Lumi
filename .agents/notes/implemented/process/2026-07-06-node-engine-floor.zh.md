@@ -10,6 +10,8 @@ Status: implemented
 
 ## 决策
 
+下文的多运行时 engine 范围与 CI 矩阵已由[统一 Node 22 与 Lumi 仓库治理](2026-08-15-node-22-lumi-repository-governance.md)取代。实测 Node 22 依赖下限仍是 `^22.19.0` 的依据。
+
 将 `engines.node` 设为 `^22.19.0 || >=24.0.0`，并在 `['22.19', 24, 26]` 上运行 keyless CI。主要的 Node 24 任务负责整套类型检查和单元测试覆盖率任务；三个版本均运行 source-worker、Zstandard、source-launch 和 [jsdom 存储](../testing/2026-07-30-vitest-jsdom-webstorage-ownership.md) 专项冒烟测试，不重复这套类型检查和覆盖率任务。真实 API 的 e2e 工作流保持在 Node 24 上，因为它验证的是 API 集成而非运行时下限。
 
 两个 Node 特性决定了源码运行时的门槛：

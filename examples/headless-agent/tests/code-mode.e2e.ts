@@ -13,9 +13,11 @@ import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
 
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { LocalBashExecutor } from '@deepseek-ai/dsh-bash-local'
+import { PwshLocalExecutor } from '@deepseek-ai/dsh-pwsh-local'
 import * as BashEnvPlugin from '@deepseek-ai/dsh-shell-env'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash'
+import * as ToolPwsh from '@deepseek-ai/dsh-tool-pwsh'
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek'
 import { WorkerThreadCodeRuntime } from '@deepseek-ai/dsh-code-runtime-worker-thread'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
@@ -35,6 +37,16 @@ import * as ToolCordis from '@deepseek-ai/dsh-tool-cordis'
 const PERSONA = 'You are a coding agent. You work by writing TypeScript programs for run_code: '
   + 'batch related tool work into one program and print or return ONLY the findings that matter.'
 const WORKSPACE_PROBE = 'dragonfruit-8675309'
+const PLATFORM_SHELL_TOOL = process.platform === 'win32' ? 'pwsh' : 'bash'
+const PLATFORM_SHELL_COMMANDS = process.platform === 'win32'
+  ? {
+    complete: "Start-Sleep -Milliseconds 200; [Console]::Out.WriteLine('background-complete')",
+    wait: 'Start-Sleep -Seconds 10',
+  }
+  : {
+    complete: "sleep 0.2; printf 'background-complete\\n'",
+    wait: 'sleep 10',
+  }
 
 let ctx: Context | undefined
 let workdir: string | undefined
@@ -49,6 +61,18 @@ afterEach(async () => {
   workdir = undefined
 })
 
+/** Mount the host's native local shell executor and its matching model tool. */
+async function mountLocalShell(harness: Context, cwd: string): Promise<void> {
+  await harness.plugin(BashEnvPlugin)
+  if (process.platform === 'win32') {
+    await harness.plugin(PwshLocalExecutor, { cwd, timeoutMs: 30_000 })
+    await harness.plugin(ToolPwsh)
+  } else {
+    await harness.plugin(LocalBashExecutor, { cwd, timeoutMs: 30_000 })
+    await harness.plugin(ToolBash)
+  }
+}
+
 async function codeModeHarness(cwd: string): Promise<Context> {
   const harness = new Context()
   await harness.plugin(LlmRuntime)
@@ -59,9 +83,7 @@ async function codeModeHarness(cwd: string): Promise<Context> {
   await harness.plugin(AgentLoop, { agents: [] })
   await harness.plugin(LlmDeepSeek)
   await harness.plugin(LocalSubprocessRuntime)
-  await harness.plugin(BashEnvPlugin)
-  await harness.plugin(LocalBashExecutor, { cwd, timeoutMs: 30_000 })
-  await harness.plugin(ToolBash)
+  await mountLocalShell(harness, cwd)
   await harness.plugin(WorkerThreadCodeRuntime, {})
   return harness
 }
@@ -120,15 +142,13 @@ async function typedCodeModeHarness(): Promise<Context> {
   return harness
 }
 
-/** Keyless real-worker harness with the task-owned bash lifecycle. */
+/** Keyless real-worker harness with the task-owned native-shell lifecycle. */
 async function backgroundCodeModeHarness(cwd: string): Promise<Context> {
   const harness = await typedCodeModeHarness()
   await harness.plugin(LocalJobRegistry)
   await harness.plugin(ToolTasks, {})
   await harness.plugin(LocalSubprocessRuntime)
-  await harness.plugin(BashEnvPlugin)
-  await harness.plugin(LocalBashExecutor, { cwd, timeoutMs: 30_000 })
-  await harness.plugin(ToolBash)
+  await mountLocalShell(harness, cwd)
   return harness
 }
 
@@ -191,14 +211,14 @@ describe('Code Mode typed values: keyless real-worker contracts', () => {
     ctx = await backgroundCodeModeHarness(workdir)
 
     const jobId = completion(await runCode(ctx, `
-      const started = await tools.bash({
-        command: "sleep 0.2; printf 'background-complete\\n'",
+      const started = await tools.${PLATFORM_SHELL_TOOL}({
+        command: ${JSON.stringify(PLATFORM_SHELL_COMMANDS.complete)},
         description: 'Run completion marker in background',
         run_in_background: true,
       });
       return started.jobId;
     `))
-    expect(jobId).toBe('bash-1')
+    expect(jobId).toBe(`${PLATFORM_SHELL_TOOL}-1`)
 
     const polled = completion(await runCode(ctx, `
       return await tools.job_output({ job_id: ${JSON.stringify(jobId)}, wait: true, timeout_ms: 5000 });
@@ -206,7 +226,7 @@ describe('Code Mode typed values: keyless real-worker contracts', () => {
     if (typeof polled !== 'object' || polled === null || Array.isArray(polled)) throw new Error('invalid job_output completion')
     const taskOutput = polled as Record<string, unknown>
     expect(taskOutput.text).toContain('background-complete')
-    expect(taskOutput.job).toMatchObject({ id: jobId, kind: 'bash', status: 'completed' })
+    expect(taskOutput.job).toMatchObject({ id: jobId, kind: PLATFORM_SHELL_TOOL, status: 'completed' })
   }, 15_000)
 
   it('pre-abort spawns nothing; post-publication abort leaves job_kill as the cancellation owner', async () => {
@@ -216,14 +236,14 @@ describe('Code Mode typed values: keyless real-worker contracts', () => {
     const pre = new AbortController()
     pre.abort('pre-aborted')
     const preResult = await runCode(ctx, `
-      return await tools.bash({ command: 'sleep 10', description: 'Must never start', run_in_background: true });
+      return await tools.${PLATFORM_SHELL_TOOL}({ command: ${JSON.stringify(PLATFORM_SHELL_COMMANDS.wait)}, description: 'Must never start', run_in_background: true });
     `, pre.signal)
     expect(preResult.isError).toBe(true)
     expect(ctx.jobs.list()).toEqual([])
 
     const afterPublication = new AbortController()
     const running = runCode(ctx, `
-      const started = await tools.bash({ command: 'sleep 10', description: 'Wait for explicit task kill', run_in_background: true });
+      const started = await tools.${PLATFORM_SHELL_TOOL}({ command: ${JSON.stringify(PLATFORM_SHELL_COMMANDS.wait)}, description: 'Wait for explicit task kill', run_in_background: true });
       console.log(started.jobId);
       await new Promise(() => {});
     `, afterPublication.signal)
@@ -231,7 +251,7 @@ describe('Code Mode typed values: keyless real-worker contracts', () => {
       await new Promise(resolve => setTimeout(resolve, 10))
     }
     const job = ctx.jobs.list()[0]
-    expect(job).toMatchObject({ id: 'bash-1', status: 'running' })
+    expect(job).toMatchObject({ id: `${PLATFORM_SHELL_TOOL}-1`, status: 'running' })
     afterPublication.abort('outer-call-cancelled')
     expect((await running).isError).toBe(true)
     expect(ctx.jobs.list()[0]).toMatchObject({ id: job!.id, status: 'running' })
@@ -246,13 +266,13 @@ describe('Code Mode typed values: keyless real-worker contracts', () => {
     expect(settled).toMatchObject({ job: { id: job!.id, status: 'killed' } })
   }, 15_000)
 
-  it('keeps foreground bash coupled to the outer signal', async () => {
+  it('keeps the foreground native shell coupled to the outer signal', async () => {
     workdir = await mkdtemp(join(tmpdir(), 'dsh-code-mode-foreground-cancel-'))
     ctx = await backgroundCodeModeHarness(workdir)
     const controller = new AbortController()
     const startedAt = Date.now()
     const pending = runCode(ctx, `
-      return await tools.bash({ command: 'sleep 10', description: 'Run cancellable foreground command' });
+      return await tools.${PLATFORM_SHELL_TOOL}({ command: ${JSON.stringify(PLATFORM_SHELL_COMMANDS.wait)}, description: 'Run cancellable foreground command' });
     `, controller.signal)
     setTimeout(() => { controller.abort('stop-foreground') }, 200)
     const result = await pending
@@ -358,9 +378,12 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY)('Code Mode: real model writes a p
     agent.followup(createUserMessage({
       content: [{
         type: 'text',
-        text: 'Using one run_code program: run `echo alpha-7` with the bash tool, run `echo beta-9` with the bash tool, '
-        + 'then write both outputs joined by a plus sign into combined.txt (bash heredoc or redirect), '
-        + 'and return only the joined string.',
+        text: process.platform === 'win32'
+          ? 'Using one run_code program: run `Write-Output alpha-7` with the pwsh tool, run `Write-Output beta-9` with the pwsh tool, '
+            + 'then write both outputs joined by a plus sign into combined.txt with PowerShell, and return only the joined string.'
+          : 'Using one run_code program: run `echo alpha-7` with the bash tool, run `echo beta-9` with the bash tool, '
+            + 'then write both outputs joined by a plus sign into combined.txt (bash heredoc or redirect), '
+            + 'and return only the joined string.',
       }], source: { kind: 'user' } }))
     await waitForIdle(ctx, agent)
     const events: SessionEvent[] = [...agent.session.events]
@@ -379,7 +402,7 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY)('Code Mode: real model writes a p
     // …and the program's tool calls landed as dispatch events under it.
     const dispatches = events.filter(event => event.type === 'tool/code-dispatch')
     expect(dispatches.length).toBeGreaterThanOrEqual(2)
-    expect(dispatches.every(event => event.data.name === 'bash')).toBe(true)
+    expect(dispatches.every(event => event.data.name === PLATFORM_SHELL_TOOL)).toBe(true)
     const parents = new Set(calls.map(event => event.data.callId))
     expect(dispatches.every(event => parents.has(event.data.parentCallId))).toBe(true)
 

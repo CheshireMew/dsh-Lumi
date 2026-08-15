@@ -345,7 +345,7 @@ describe('settings domain', () => {
     ctx.settings.register(settingsNamespace('ui-conversation'), z.object({
       busyEnter: z.union(['queue', 'steer']).default('queue'),
     }))
-    ctx.settings.register(settingsNamespace('ui-anime'), z.object({
+    ctx.settings.register(settingsNamespace('ui-lumi'), z.object({
       layoutMode: z.union(['scene', 'work']).default('scene'),
     }))
     ctx.settings.register(settingsNamespace('shell'), z.object({
@@ -361,7 +361,7 @@ describe('settings domain', () => {
 
     const value = expectOk(await api.settings.describe(request({})))
     expect(value.namespaces.map(view => view.ns)).toEqual([
-      'llm-deepseek', 'permission', 'ui-theme', 'locale', 'ui-conversation', 'ui-anime',
+      'llm-deepseek', 'permission', 'ui-theme', 'locale', 'ui-conversation', 'ui-lumi',
       'shell', 'agent-loop', 'web-search-deepseek',
     ])
     const permission = expectOk(await api.settings.mutate(request({
@@ -384,11 +384,11 @@ describe('settings domain', () => {
       ops: [{ op: 'set', path: ['busyEnter'], value: 'steer' }],
     })))
     expect(conversation.value).toEqual({ busyEnter: 'steer' })
-    const anime = expectOk(await api.settings.mutate(request({
-      ns: 'ui-anime',
+    const lumi = expectOk(await api.settings.mutate(request({
+      ns: 'ui-lumi',
       ops: [{ op: 'set', path: ['layoutMode'], value: 'work' }],
     })))
-    expect(anime.value).toEqual({ layoutMode: 'work' })
+    expect(lumi.value).toEqual({ layoutMode: 'work' })
     const bash = expectOk(await api.settings.mutate(request({
       ns: 'shell',
       ops: [{ op: 'set', path: ['timeoutMs'], value: 5_000 }],

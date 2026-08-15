@@ -156,7 +156,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     slotInject: '',
     declaredBy: 'an entry in \'conversation.chat.node\' (client-ui-conversation), so it exists while that entry is mounted',
     occupants: [
-      '@dsh-anime/client-character AnimeVoiceAction id \'anime-voice\'',
+      '@dsh-lumi/client-character LumiVoiceAction id \'lumi-voice\'',
       'client-ui-message-feedback MessageFeedbackActions id \'feedback\'',
     ],
     replaceRisk: 'none',
@@ -1078,7 +1078,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     slotInject: '',
     declaredBy: 'an entry in \'root\' (client-ui-layout), so it exists while that entry is mounted',
     occupants: [
-      '@dsh-anime/client-shell AnimeFrame',
+      '@dsh-lumi/client-shell LumiFrame',
       'client-ui-layout AppFrame',
     ],
     replaceRisk: 'shadows-shipped-ui',
@@ -1221,8 +1221,8 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     slotInject: '',
     declaredBy: 'an entry in \'settings.section\' (client-ui-settings-general), so it exists while that entry is mounted',
     occupants: [
-      '@dsh-anime/client-character AnimeSettingsRow id \'anime-character\'',
       'client-locale LanguageRow id \'language\'',
+      '@dsh-lumi/client-character LumiSettingsRow id \'lumi-character\'',
       'client-ui-agent-preset AgentPresetRow id \'agent-preset\'',
       'client-ui-conversation EnterBehaviorRow id \'composer-enter\'',
       'client-ui-permission-presets PermissionRow id \'permission\'',

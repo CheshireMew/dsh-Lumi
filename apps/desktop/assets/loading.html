@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
-    <title>DeepSeek Harness · Anime</title>
+    <title>DeepSeek Harness · Lumi</title>
     <style>
       :root { color-scheme: light; font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif; }
       * { box-sizing: border-box; }
@@ -22,6 +22,7 @@
       button { padding: 10px 18px; border: 1px solid rgba(78,109,143,.18); border-radius: 999px; color: #3e5870; font: inherit; cursor: pointer; background: rgba(255,255,255,.72); }
       button.primary { border: 0; color: white; background: linear-gradient(135deg, #5c9bd5, #7a6fc3); }
       button:disabled { cursor: wait; opacity: .55; }
+      button:focus-visible { outline: 3px solid #345fb4; outline-offset: 3px; }
       body.error .loader { display: none; }
       body.error .actions { display: flex; }
       @keyframes travel { from { transform: translateX(-5%); } to { transform: translateX(170%); } }
@@ -29,10 +30,10 @@
     </style>
   </head>
   <body>
-    <main>
+    <main aria-labelledby="product-title">
       <div class="mark" aria-hidden="true">鲸</div>
-      <h1>DeepSeek Harness · Anime</h1>
-      <p id="status">正在唤醒 Harness 与角色世界……</p>
+      <h1 id="product-title">Lumi</h1>
+      <p id="status" role="status" aria-live="polite">正在启动 Harness 与 Lumi……</p>
       <div class="loader" aria-hidden="true"></div>
       <div class="actions">
         <button id="restart" class="primary" type="button">重试</button>

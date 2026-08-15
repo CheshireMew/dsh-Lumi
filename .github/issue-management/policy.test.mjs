@@ -117,10 +117,14 @@ test('accepts an intended Owner while assignment permission is pending', () => {
 })
 
 test('allows optional metadata in every open Status', () => {
-  assert.deepEqual(validateIssue(legalIssue), [])
+  assert.deepEqual(validateIssue(legalIssue, true), [])
   for (const status of ['Inbox', 'Backlog', 'Ready', 'In progress', 'In review']) {
-    assert.deepEqual(validateIssue({ ...legalIssue, status }), [])
+    assert.deepEqual(validateIssue({ ...legalIssue, status }, true), [])
   }
+})
+
+test('does not require organization Project fields in the independent repository', () => {
+  assert.deepEqual(validateIssue({ ...legalIssue, type: null, priority: null, status: null }), [])
 })
 
 test('rejects metadata prefixes in an Issue title', () => {
@@ -146,7 +150,7 @@ test('reserves PR kind and legacy labels for pull requests', () => {
 
 test('keeps terminal Status aligned with the native close reason', () => {
   assert.deepEqual(
-    validateIssue({ ...legalIssue, status: 'Done', state: 'closed', stateReason: 'completed' }),
+    validateIssue({ ...legalIssue, status: 'Done', state: 'closed', stateReason: 'completed' }, true),
     [],
   )
   assert.deepEqual(
@@ -155,10 +159,10 @@ test('keeps terminal Status aligned with the native close reason', () => {
       status: 'No action',
       state: 'closed',
       stateReason: 'not_planned',
-    }),
+    }, true),
     [],
   )
-  assert.ok(validateIssue({ ...legalIssue, status: 'Done' }).includes('Done 必须对应 Completed 关闭原因'))
+  assert.ok(validateIssue({ ...legalIssue, status: 'Done' }, true).includes('Done 必须对应 Completed 关闭原因'))
 })
 
 test('separates resolving and informational references', () => {
@@ -295,6 +299,7 @@ test('toggles automation-owned work on request changes and repeated review reque
   let status = nextResolvingIssueStatus(
     'In review',
     'changes-requested',
+    'dsh-issue-management',
     'dsh-issue-management',
   )
   assert.equal(status, 'In progress')

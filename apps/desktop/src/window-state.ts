@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { writeFileAtomicSync } from '@deepseek-ai/dsh-atomic-write'
 
 /** Persisted normal window bounds and maximize state. */
 export interface DesktopWindowPlacement {
@@ -19,7 +20,7 @@ export interface DisplayBounds {
 }
 
 /** Resolve the desktop-owned placement file under Electron userData. */
-export function windowPlacementPath(userData: string): string { return join(userData, 'anime-window-state.json') }
+export function windowPlacementPath(userData: string): string { return join(userData, 'lumi-window-state.json') }
 
 /** Read and validate a persisted placement without trusting the JSON file. */
 export function readWindowPlacement(path: string): DesktopWindowPlacement | undefined {
@@ -71,8 +72,5 @@ export function resolveWindowPlacement(
 
 /** Atomically replace the small desktop-owned placement document. */
 export function writeWindowPlacement(path: string, placement: DesktopWindowPlacement): void {
-  mkdirSync(dirname(path), { recursive: true })
-  const temporary = `${path}.tmp`
-  writeFileSync(temporary, `${JSON.stringify(placement, undefined, 2)}\n`, 'utf8')
-  renameSync(temporary, path)
+  writeFileAtomicSync(path, `${JSON.stringify(placement, undefined, 2)}\n`, { mode: 0o600, dirMode: 0o700 })
 }

@@ -4,11 +4,11 @@ import { runProfile, type ProcessShutdown } from '@deepseek-ai/dsh/profile-boot'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { isHarnessWorkerCommand, type HarnessWorkerEvent } from './protocol.ts'
 
-const PROFILE = 'anime-desktop'
+const PROFILE = 'lumi-desktop'
 const INITIAL_BUNDLES = [
   '@deepseek-ai/dsh-base',
   '@deepseek-ai/dsh-web-app',
-  '@dsh-anime/bundle-desktop',
+  '@dsh-lumi/bundle-desktop',
 ] as const
 
 /** Send a cloneable lifecycle fact to the Electron main process. */
@@ -36,8 +36,8 @@ let stopping = false
 /** Boot the profile once; process replacement owns restart isolation. */
 async function boot(): Promise<void> {
   post({ type: 'starting' })
-  post({ type: 'log', level: 'info', message: 'Loading anime-desktop profile.' })
-  const environment = loadLayeredEnv('dsh-anime')
+  post({ type: 'log', level: 'info', message: 'Loading lumi-desktop profile.' })
+  const environment = loadLayeredEnv('dsh-lumi')
   const result = await runProfile({
     environment,
     profile: PROFILE,
@@ -48,7 +48,7 @@ async function boot(): Promise<void> {
   })
   shutdown = result.shutdown
   const webServer = result.ctx.get('webServer')
-  if (webServer === undefined) throw new Error('anime-desktop: profile booted without the webServer service')
+  if (webServer === undefined) throw new Error('lumi-desktop: profile booted without the webServer service')
   const port = webServer.port
   post({ type: 'ready', port, url: `http://127.0.0.1:${port}` })
   post({ type: 'log', level: 'info', message: `Harness is listening on 127.0.0.1:${port}.` })

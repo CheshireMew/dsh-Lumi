@@ -7,20 +7,21 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, rm, writeFile, realpath } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import Lsp, { type LspQueryRequest, type LspQueryResult } from '@deepseek-ai/dsh-lsp'
 import * as LspLocal from '@deepseek-ai/dsh-lsp-stdio'
 
-// The server binary is a dev dependency of this package; resolve its pnpm-hoisted .bin path.
+// Execute the package's JavaScript entry through this test's Node runtime.
+// This avoids POSIX URL pathnames and Windows-specific .CMD launcher rules.
 const serverBin = join(
-  new URL('..', import.meta.url).pathname,
-  'node_modules',
-  '.bin',
-  'typescript-language-server',
+  dirname(createRequire(import.meta.url).resolve('typescript-language-server/package.json')),
+  'lib',
+  'cli.mjs',
 )
 
 let root: string
@@ -59,8 +60,8 @@ beforeAll(async () => {
   await ctx.plugin(LspLocal, {
     servers: {
       typescript: {
-        command: serverBin,
-        args: ['--stdio'],
+        command: process.execPath,
+        args: [serverBin, '--stdio'],
         extensionToLanguage: { '.ts': 'typescript', '.tsx': 'typescriptreact' },
       },
     },

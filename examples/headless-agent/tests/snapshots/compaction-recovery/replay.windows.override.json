@@ -1,0 +1,17 @@
+{
+  "patches": [
+    {
+      "at": 0,
+      "entry": {
+        "kind": "chunks",
+        "chunks": [
+          { "type": "block-start", "index": 0, "blockType": "tool-call" },
+          { "type": "tool-call-delta", "index": 0, "id": "call_compaction_marker", "name": "pwsh", "argumentsDelta": "{\"command\":\"[Console]::Out.WriteLine('alpha')\",\"description\":\"Emit compaction premise marker\"}" },
+          { "type": "block-end", "index": 0, "block": { "type": "tool-call", "id": "call_compaction_marker", "name": "pwsh", "arguments": "{\"command\":\"[Console]::Out.WriteLine('alpha')\",\"description\":\"Emit compaction premise marker\"}" } },
+          { "type": "usage", "usage": { "inputTokens": 24, "outputTokens": 6 } },
+          { "type": "finish", "reason": { "kind": "tool-calls" } }
+        ]
+      }
+    }
+  ]
+}

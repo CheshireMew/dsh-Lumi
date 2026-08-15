@@ -13,7 +13,7 @@ import type {
 import { rehydrateSchema, validateDraft } from '@deepseek-ai/dsh-client-schema-form'
 import {
   createSnapshotStore, type SettingsScope, type SettingsScopeSnapshot,
-  type SettingsScopeSpec, type SnapshotStore,
+  type SettingsScopeMutation, type SettingsScopeSpec, type SnapshotStore,
 } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only, and deliberately NOT `@deepseek-ai/dsh-api-remotes/client`: this
 // package is reachable from the Host build graph through its feature-package
@@ -98,7 +98,7 @@ export class SettingsScopeController<T> implements SettingsScope<T> {
    * @returns settlement after the write and any latest-write recovery read.
    */
   set(field: string, value: unknown): Promise<void> {
-    return this.write({ op: 'set', path: [field], value })
+    return this.mutate([{ op: 'set', field, value }])
   }
 
   /**
@@ -108,10 +108,19 @@ export class SettingsScopeController<T> implements SettingsScope<T> {
    * @returns settlement after the clear and any latest-write recovery read.
    */
   unset(field: string): Promise<void> {
-    return this.write({ op: 'unset', path: [field] })
+    return this.mutate([{ op: 'unset', field }])
   }
 
-  private write(op: SettingsPathOpView): Promise<void> {
+  /**
+   * Queue an atomic field batch; see {@link SettingsScope.mutate}.
+   * @param operations - ordered field changes for one Host mutation.
+   * @returns settlement after the write and any latest-write recovery read.
+   */
+  mutate(operations: readonly SettingsScopeMutation[]): Promise<void> {
+    if (operations.length === 0) return Promise.resolve()
+    const ops: SettingsPathOpView[] = operations.map(operation => operation.op === 'set'
+      ? { op: 'set', path: [operation.field], value: operation.value }
+      : { op: 'unset', path: [operation.field] })
     this.readGeneration += 1
     const generation = ++this.writeGeneration
     return this.enqueue(async () => {
@@ -120,7 +129,7 @@ export class SettingsScopeController<T> implements SettingsScope<T> {
       try {
         response = await this.api.settings.mutate({
           ns: this.spec.namespace,
-          ops: [op],
+          ops,
           ...(revision === undefined ? {} : { expectedRevision: revision }),
         })
       } catch (_settingsWriteFailure) {

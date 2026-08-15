@@ -31,14 +31,32 @@
       - id: deepseek-v4-flash
         contextWindow: 128000
 
-# Managed child-process groups for the bash executor (spawn/kill/output plumbing).
+# Managed child-process groups for the host-native shell executor
+# (spawn/kill/output plumbing).
 - id: subprocess
   name: '@deepseek-ai/dsh-subprocess-local'
 
 - id: bash
   name: '@deepseek-ai/dsh-bash-local'
+  disabled: !!js process.platform === 'win32'
   config:
     timeoutMs: 60000
+
+- id: pwsh
+  name: '@deepseek-ai/dsh-pwsh-local'
+  disabled: !!js process.platform !== 'win32'
+  config:
+    timeoutMs: 60000
+
+# The example spine owns Bash on POSIX. Windows replaces that consumer with
+# the matching PowerShell tool over the same shell service.
+- id: shell-env-pwsh
+  name: '@deepseek-ai/dsh-shell-env'
+  disabled: !!js process.platform !== 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
 
 # The example composition pre-creates one fresh `main` agent for its test driver.
 - id: agent-spine
@@ -54,6 +72,7 @@
         cwd: !!js process.cwd()
     workspaceContext:
       maxBytes: 65536
+    toolBash: !!js "process.platform === 'win32' ? false : {}"
     persona: |
       You are headless-agent, a coding assistant powered by the {{model}} model.
 

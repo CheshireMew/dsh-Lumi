@@ -35,7 +35,17 @@ const retryScenarioDir = join(snapshotsDir, 'provider-retry')
 const retryConfigPath = fileURLToPath(new URL('../retry.cordis.snapshot.yml', import.meta.url))
 const compactionScenarioDir = join(snapshotsDir, 'compaction-recovery')
 const compactionSessionFixture = join(compactionScenarioDir, 'session.jsonl')
-const compactionStreamExpected = join(compactionScenarioDir, 'stream-json.expected.jsonl')
+const compactionExpectedSessionFixture = join(
+  compactionScenarioDir,
+  process.platform === 'win32' ? 'session.windows.expected.jsonl' : 'session.jsonl',
+)
+const compactionStreamExpected = join(
+  compactionScenarioDir,
+  process.platform === 'win32' ? 'stream-json.windows.expected.jsonl' : 'stream-json.expected.jsonl',
+)
+const compactionReplayOverride = process.platform === 'win32'
+  ? join(compactionScenarioDir, 'replay.windows.override.json')
+  : undefined
 const compactionConfigPath = fileURLToPath(new URL('../compaction.cordis.snapshot.yml', import.meta.url))
 const credentialsScenarioDir = join(snapshotsDir, 'missing-credential')
 const credentialsConfigPath = fileURLToPath(new URL('../credentials.cordis.snapshot.yml', import.meta.url))
@@ -334,8 +344,14 @@ describe('headless stream-json snapshots', () => {
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
   it('recovers from context overflow through an assembled compaction', async () => {
-    const prompt = await scenarioPrompt(compactionScenarioDir, 'compaction-recovery')
-    let expectedSession = await readFile(compactionSessionFixture, 'utf8')
+    const recordedPrompt = await scenarioPrompt(compactionScenarioDir, 'compaction-recovery')
+    const prompt = process.platform === 'win32'
+      ? recordedPrompt.replace('through bash', 'through PowerShell')
+      : recordedPrompt
+    let expectedSession = await readFile(compactionExpectedSessionFixture, 'utf8').catch(async (error: unknown) => {
+      if (!refreshing || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      return await readFile(compactionSessionFixture, 'utf8')
+    })
     let runCwd = ''
     const result = await runLoaderSmoke({
       label: 'compaction recovery headless stream-json snapshot',
@@ -348,6 +364,7 @@ describe('headless stream-json snapshots', () => {
       env: {
         DSH_SNAPSHOT: 'replay',
         DSH_SNAPSHOT_FILE: compactionSessionFixture,
+        ...compactionReplayOverride === undefined ? {} : { DSH_SNAPSHOT_OVERRIDE: compactionReplayOverride },
         NODE_OPTIONS: [process.env.NODE_OPTIONS, '--disable-warning=ExperimentalWarning'].filter(Boolean).join(' '),
       },
       prepare: (cwd) => { runCwd = cwd },
@@ -389,7 +406,7 @@ describe('headless stream-json snapshots', () => {
           expectedSession = tokenizeSessionFixtureCwd(
             stabilizeRefreshLog(actual.content, expectedSession, replacements, actualContext),
           )
-          await writeFile(compactionSessionFixture, expectedSession)
+          await writeFile(compactionExpectedSessionFixture, expectedSession)
         }
         const expectedContext = contextFromLogs([expectedSession])
         expect(scrubRequestHeaders(normalizeSessionLog(actual.content, actualContext)))

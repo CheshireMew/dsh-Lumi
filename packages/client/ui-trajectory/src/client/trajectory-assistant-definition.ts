@@ -73,12 +73,10 @@ function compactBlocks(blocks: readonly (AssistantBlock | undefined)[]): Assista
   return blocks.filter((block): block is AssistantBlock => block !== undefined)
 }
 
-function hasVisibleContent(blocks: readonly AssistantBlock[]): boolean {
-  return blocks.some((block) => {
-    if (block.kind === 'tool-call') return false
-    if (block.kind === 'text' || block.kind === 'reasoning') return block.text.trim() !== ''
-    return true
-  })
+function isVisibleContent(block: AssistantBlock): boolean {
+  if (block.kind === 'tool-call') return false
+  if (block.kind === 'text' || block.kind === 'reasoning') return block.text.trim() !== ''
+  return true
 }
 
 function hasInterruptionEvidence(blocks: readonly AssistantBlock[]): boolean {
@@ -111,16 +109,21 @@ function updateChunk(state: AssistantState, match: ConversationMatch): Assistant
     return { ...state, sawChunk: true, usage: addUsage(state.usage, chunk.usage) }
   }
   const blocks = [...state.blocks]
+  let addsVisibleContent = false
   switch (chunk.type) {
-    case 'block-start':
-      blocks[chunk.index] = emptyAssistantBlock(chunk.blockType)
+    case 'block-start': {
+      const block = emptyAssistantBlock(chunk.blockType)
+      blocks[chunk.index] = block
+      addsVisibleContent = isVisibleContent(block)
       break
+    }
     case 'text-delta': {
       const previous = blocks[chunk.index]
       blocks[chunk.index] = {
         kind: 'text',
         text: (previous?.kind === 'text' ? previous.text : '') + chunk.text,
       }
+      addsVisibleContent = state.firstVisibleSeq === undefined && chunk.text.trim() !== ''
       break
     }
     case 'reasoning-delta': {
@@ -129,6 +132,7 @@ function updateChunk(state: AssistantState, match: ConversationMatch): Assistant
         kind: 'reasoning',
         text: (previous?.kind === 'reasoning' ? previous.text : '') + chunk.text,
       }
+      addsVisibleContent = state.firstVisibleSeq === undefined && chunk.text.trim() !== ''
       break
     }
     case 'tool-call-delta': {
@@ -144,13 +148,16 @@ function updateChunk(state: AssistantState, match: ConversationMatch): Assistant
       }
       break
     }
-    case 'block-end':
-      blocks[chunk.index] = toAssistantBlock(chunk.block)
+    case 'block-end': {
+      const block = toAssistantBlock(chunk.block)
+      blocks[chunk.index] = block
+      addsVisibleContent = isVisibleContent(block)
       break
+    }
     default:
       return { ...state, sawChunk: true }
   }
-  const visible = hasVisibleContent(compactBlocks(blocks))
+  const visible = state.firstVisibleSeq !== undefined || addsVisibleContent
   return {
     ...state,
     sawChunk: true,

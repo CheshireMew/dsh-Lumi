@@ -1,5 +1,6 @@
 /** Release family discovery, publish order, tag naming, and the bump judgements. */
 
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { releaseFamily, type ReleaseMember } from './families.ts'
 import { compareVersions, nextVendorVersion, reachesPayload } from './bump.ts'
@@ -16,6 +17,16 @@ function member(directory: string, name: string, manifest: Record<string, unknow
 }
 
 describe('release families', () => {
+  it('keeps the private desktop application outside the public npm family', () => {
+    const directories = releaseFamily('dsh').members(resolve(import.meta.dirname, '../..'))
+      .map(member => member.directory)
+
+    expect(directories).toContain('apps/cli')
+    expect(directories).toContain('apps/web')
+    expect(directories).not.toContain('apps/desktop')
+    expect(directories).not.toContain('packages/bundle/lumi-desktop')
+  })
+
   it('names one tag for the whole dsh family and one per vendored package', () => {
     const dsh = releaseFamily('dsh')
     const vendor = releaseFamily('vendor')

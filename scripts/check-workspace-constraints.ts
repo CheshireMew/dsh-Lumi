@@ -50,7 +50,7 @@ const publishedRepositoryUrl = 'git+https://github.com/deepseek-ai/deepseek-harn
 /** Directories whose packages this repository publishes: one release member each. */
 const releaseMemberDirectory = /^(?:packages\/[^/]+\/[^/]+|apps\/[^/]+|vendor\/[^/]+)$/
 /** Product-layer packages are intentionally consumed only by this desktop workspace. */
-const privateProductPackagePrefix = '@dsh-anime/'
+const privateProductPackagePrefix = '@dsh-lumi/'
 
 const localArtifactDirs = new Set(['node_modules'])
 const appPackageFiles: Readonly<Record<string, readonly string[]>> = {

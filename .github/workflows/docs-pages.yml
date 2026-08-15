@@ -2,7 +2,7 @@ name: Deploy documentation
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - '.github/workflows/docs-pages.yml'
       - 'docs/**'
@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 env:
-  PRIMARY_NODE_VERSION: '24'
+  PRIMARY_NODE_VERSION: '22.23.2'
   # CI runs must never report to the production telemetry endpoint baked
   # into apps/cli/cordis.yml (AppCLIEntry disables the row when set).
   DSH_TELEMETRY_DISABLED: '1'

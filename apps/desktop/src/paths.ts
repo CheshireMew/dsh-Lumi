@@ -6,17 +6,20 @@ import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 export interface DesktopPaths {
   home: string
   logs: string
+  crashes: string
   characterPacks: string
 }
 
 /** Resolve and materialize the desktop-owned directories without touching user content. */
 export function ensureDesktopPaths(): DesktopPaths {
   const home = resolveDshHome()
-  const logs = join(home, 'logs', 'anime-desktop')
-  const characterPacks = join(home, 'anime', 'packs')
+  const logs = join(home, 'logs', 'lumi-desktop')
+  const crashes = join(home, 'crashes', 'lumi-desktop')
+  const characterPacks = join(home, 'lumi', 'packs')
   mkdirSync(logs, { recursive: true })
+  mkdirSync(crashes, { recursive: true })
   mkdirSync(characterPacks, { recursive: true })
-  return { home, logs, characterPacks }
+  return { home, logs, crashes, characterPacks }
 }
 
 /** Log filename for one process and local calendar day. */

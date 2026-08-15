@@ -757,19 +757,19 @@
       "ignoreDependencies": [
         "@deepseek-ai/dsh-base",
         "@deepseek-ai/dsh-web-app",
-        "@dsh-anime/bundle-desktop"
+        "@dsh-lumi/bundle-desktop"
       ]
     },
-    "packages/bundle/anime-desktop": {
+    "packages/bundle/lumi-desktop": {
       "project": [
         "src/**/*.ts"
       ],
       "ignoreDependencies": [
-        "@dsh-anime/client-character",
-        "@dsh-anime/client-shell"
+        "@dsh-lumi/client-character",
+        "@dsh-lumi/client-shell"
       ]
     },
-    "packages/client/anime-character": {
+    "packages/client/lumi-character": {
       "entry": [
         "tests/**/*.spec.ts"
       ],
@@ -782,7 +782,7 @@
         "@testing-library/react"
       ]
     },
-    "packages/client/anime-shell": {
+    "packages/client/lumi-shell": {
       "entry": [
         "tests/**/*.spec.ts"
       ],

@@ -10,7 +10,7 @@ const platform = process.platform === 'win32' || process.platform === 'darwin' ?
 
 contextBridge.exposeInMainWorld('dshDesktop', {
   platform,
-  appVersion: process.env.DSH_ANIME_APP_VERSION ?? '0.0.0',
+  appVersion: process.env.DSH_LUMI_APP_VERSION ?? '0.0.0',
   window: {
     minimize: () => ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.minimize) as Promise<void>,
     toggleMaximize: () => ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.toggleMaximize) as Promise<void>,

@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -21,6 +21,25 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
+    open: (async (path: unknown, ...rest: never[]) => {
+      const handle = await (actual.open as (
+        path: unknown,
+        ...args: never[]
+      ) => ReturnType<typeof actual.open>)(path, ...rest)
+      if (!state.failTempWrite || !String(path).endsWith('.tmp')) return handle
+      state.failTempWrite = false
+      return new Proxy(handle, {
+        get(target, property): unknown {
+          if (property === 'writeFile') {
+            return async () => {
+              throw Object.assign(new Error('ENOSPC: injected file-handle write failure'), { code: 'ENOSPC' })
+            }
+          }
+          const value: unknown = Reflect.get(target, property, target)
+          return typeof value === 'function' ? value.bind(target) as unknown : value
+        },
+      })
+    }) as typeof actual.open,
     writeFile: (async (path: unknown, ...rest: never[]) => {
       if (state.holdDocumentCreate && String(path).endsWith('settings.yaml')) {
         state.holdDocumentCreate = false
@@ -30,10 +49,6 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       if (state.failDocumentCreate && String(path).endsWith('settings.yaml')) {
         state.failDocumentCreate = false
         throw Object.assign(new Error('ENOSPC: injected document create failure'), { code: 'ENOSPC' })
-      }
-      if (state.failTempWrite && String(path).endsWith('.tmp')) {
-        state.failTempWrite = false
-        throw Object.assign(new Error('ENOSPC: injected writeFile failure'), { code: 'ENOSPC' })
       }
       return (actual.writeFile as (path: unknown, ...args: never[]) => Promise<void>)(path, ...rest)
     }) as typeof actual.writeFile,
@@ -121,6 +136,7 @@ describe('writer-lock failure cleanup', () => {
     await expect(scope.update({ value: 9 })).rejects.toThrow(/ENOSPC/)
     // The document is untouched and the writer lock was released on the way out.
     expect(await readFile(path, 'utf8')).toContain('value: 1')
+    expect((await readdir(dir)).filter(name => name.endsWith('.tmp'))).toEqual([])
     await expect(access(`${path}.lock`)).rejects.toThrow()
   })
 })

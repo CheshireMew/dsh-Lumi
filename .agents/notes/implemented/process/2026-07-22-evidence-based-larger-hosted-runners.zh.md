@@ -12,13 +12,13 @@ Status: implemented
 
 ## 决策
 
-企业保留仅限本仓库使用的 Ubuntu 和 Windows x64 大型运行器池。普通拉取请求直接指定 3 个 32 核运行器池：Ubuntu 24.04 用于完整覆盖率，Ubuntu latest 用于其余主 Node 24 清单，Windows 2025 用于阻塞性 Windows 约定。公网 IP 已禁用；工作流并发仍设有边界，因为自动扩缩容上限既不会分配闲置机器，也不意味着仓库工作可以无限扩展。
+企业保留仅限本仓库使用的 Ubuntu 和 Windows x64 大型运行器池。普通拉取请求直接指定 3 个 32 核运行器池：Ubuntu 24.04 用于完整覆盖率，Ubuntu latest 用于其余主 Node 22 清单，Windows 2025 用于阻塞性 Windows 约定。公网 IP 已禁用；工作流并发仍设有边界，因为自动扩缩容上限既不会分配闲置机器，也不意味着仓库工作可以无限扩展。
 
-必需主路径依赖这些企业级运行器池。GitHub 标准托管作业保留 Node 22.19、Node 26 和 Python SDK 兼容性约定，而[可移植恢复边界](2026-07-23-portable-required-pull-request-ci.md)与[串行参考流程](2026-07-21-serial-cross-platform-ci-reference.md)则在 `master` 上持续提供完整的标准运行器证据。`suite=larger-runner-benchmark` 比较已预配规格上相互独立的关键通道，`suite=consolidated-runner-benchmark` 则比较完整聚合流程。每项基准测试都会先报告实测的处理器和内存容量，再运行仓库工作。
+必需主路径依赖这些企业级运行器池。GitHub 标准托管作业保留 Node 22.19 下限、Python SDK、Python 运行时和原生 Lumi Windows 约定，而[可移植恢复边界](2026-07-23-portable-required-pull-request-ci.md)与[串行参考流程](2026-07-21-serial-cross-platform-ci-reference.md)则在 `main` 上持续提供完整的标准运行器证据。`suite=larger-runner-benchmark` 比较已预配规格上相互独立的关键通道，`suite=consolidated-runner-benchmark` 则比较完整聚合流程。每项基准测试都会先报告实测的处理器和内存容量，再运行仓库工作。
 
 原有的门禁级和粗粒度主流程分片作业已从工作流中移除。相应的静态、lint、覆盖率、快照和场景分片选择器也已从仓库中移除，因此未使用的诊断路径无法继续维系第二套 CI 架构。
 
-Linux 主流程使用 3 个相互独立的 32 核作业。覆盖率单独运行，并设有自己的工作线程上限；静态调度器负责不消费生成输出的源码和文档门禁。第三个作业负责唯一一次 Linux 构建，随后让 lint、Node 24 运行时兼容性、依赖构建产物的快照、文档类型检查和所有产物消费方基于该目录树启动。这种[消费方独立构建](2026-07-30-independent-ci-consumer-build.md)使 3 个作业都能立即请求运行器，而无需重复编译或传输仅供本次运行使用的产物。生成的 NodeNext 消费方目录不会纳入 Oxlint 的文件发现范围，因为这些进程重叠执行时，产物检查会删除这些目录。pnpm store 会得到恢复，但缓存上传不会进入拉取请求关键路径；Oxlint 没有由仓库管理的结果缓存。性能报告采用每个作业从 `startedAt` 到 `completedAt` 的区间；运行器排队延迟是容量证据，而非仓库执行时间。
+Linux 主流程使用 3 个相互独立的 32 核作业。覆盖率单独运行，并设有自己的工作线程上限；静态调度器负责不消费生成输出的源码和文档门禁。第三个作业负责唯一一次 Linux 构建，随后让 lint、Node 22 运行时验证、依赖构建产物的快照、文档类型检查和所有产物消费方基于该目录树启动。这种[消费方独立构建](2026-07-30-independent-ci-consumer-build.md)使 3 个作业都能立即请求运行器，而无需重复编译或传输仅供本次运行使用的产物。生成的 NodeNext 消费方目录不会纳入 Oxlint 的文件发现范围，因为这些进程重叠执行时，产物检查会删除这些目录。pnpm store 会得到恢复，但缓存上传不会进入拉取请求关键路径；Oxlint 没有由仓库管理的结果缓存。性能报告采用每个作业从 `startedAt` 到 `completedAt` 的区间；运行器排队延迟是容量证据，而非仓库执行时间。
 
 门禁依赖关系保持显式。覆盖率消费源码，不等待构建。文档类型检查以消费方通道的完整 project-reference 输出为输入。快照回放和发布消费方等待生成的输出，而 Node 版本兼容性作业会验证对运行时敏感的源码加载，且不重复主源码项目图的类型检查。PTY 和子进程套件继续使用自身有界的内部并发，不继承运行器的核心数。
 

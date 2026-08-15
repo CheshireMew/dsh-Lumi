@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Lumi</title>
+  <desc id="desc">Lumi's blue-and-violet star and whale-tail app mark.</desc>
+  <defs>
+    <linearGradient id="background" x1="96" y1="64" x2="928" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#78c8f2"/>
+      <stop offset=".52" stop-color="#5e78cf"/>
+      <stop offset="1" stop-color="#8d5ebf"/>
+    </linearGradient>
+    <linearGradient id="tail" x1="272" y1="290" x2="770" y2="768" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d9edff"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="28" stdDeviation="28" flood-color="#253665" flood-opacity=".34"/>
+    </filter>
+  </defs>
+  <rect x="56" y="56" width="912" height="912" rx="232" fill="url(#background)"/>
+  <circle cx="512" cy="474" r="310" fill="#ffffff" opacity=".1"/>
+  <g fill="#ffffff" opacity=".9">
+    <path d="M226 286l15 38 39 15-39 15-15 39-15-39-39-15 39-15z"/>
+    <path d="M812 240l10 26 27 11-27 10-10 27-11-27-26-10 26-11z"/>
+    <circle cx="778" cy="390" r="14"/>
+  </g>
+  <g filter="url(#shadow)" fill="url(#tail)">
+    <path d="M512 722c-114 0-207-93-207-208 0-54 20-104 54-141 25 55 78 92 139 96l14 1 14-1c61-4 114-41 139-96 34 37 54 87 54 141 0 115-93 208-207 208z"/>
+    <path d="M512 470c-53-30-89-87-89-151 0-23 5-46 14-67 45 14 75 55 75 102 0-47 30-88 75-102 9 21 14 44 14 67 0 64-36 121-89 151z"/>
+  </g>
+  <path d="M420 565c28 25 58 37 92 37s64-12 92-37" fill="none" stroke="#617bc9" stroke-width="24" stroke-linecap="round" opacity=".82"/>
+  <circle cx="441" cy="515" r="18" fill="#536ebc"/>
+  <circle cx="583" cy="515" r="18" fill="#536ebc"/>
+  <path d="M512 680l20 49 50 20-50 20-20 50-20-50-50-20 50-20z" fill="#fff"/>
+</svg>

@@ -349,6 +349,44 @@ describe('SettingsScopeController', () => {
     expect(scope.getSnapshot()).toMatchObject({ value: { preference: 'system' }, revision: 4 })
   })
 
+  it('commits a multi-field change in one revision-fenced Host mutation', async () => {
+    const mutate = vi.fn().mockResolvedValueOnce(ok(view({ preference: 'light' }, 8)))
+    const describeCall = vi.fn().mockResolvedValueOnce(described({ preference: 'dark' }, 7))
+    const scope = new SettingsScopeController<UiTestSettings>(
+      { settings: { describe: describeCall, mutate } } as never,
+      { namespace: 'ui-test' },
+    )
+    await scope.load()
+
+    await scope.mutate([
+      { op: 'set', field: 'preference', value: 'light' },
+      { op: 'unset', field: 'obsolete' },
+    ])
+
+    expect(mutate).toHaveBeenCalledOnce()
+    expect(mutate).toHaveBeenCalledWith({
+      ns: 'ui-test',
+      ops: [
+        { op: 'set', path: ['preference'], value: 'light' },
+        { op: 'unset', path: ['obsolete'] },
+      ],
+      expectedRevision: 7,
+    })
+    expect(scope.getSnapshot()).toMatchObject({ value: { preference: 'light' }, revision: 8 })
+  })
+
+  it('settles an empty mutation without contacting the Host', async () => {
+    const mutate = vi.fn()
+    const scope = new SettingsScopeController<UiTestSettings>(
+      { settings: { describe: vi.fn(), mutate } } as never,
+      { namespace: 'ui-test' },
+    )
+
+    await expect(scope.mutate([])).resolves.toBeUndefined()
+
+    expect(mutate).not.toHaveBeenCalled()
+  })
+
   it('recovers the Host state when the latest clear is refused', async () => {
     const mutate = vi.fn().mockResolvedValueOnce(rejected())
     const describeCall = vi.fn()

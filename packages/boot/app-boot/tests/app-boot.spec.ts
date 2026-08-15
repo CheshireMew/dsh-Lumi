@@ -649,6 +649,10 @@ describe('boot', () => {
       expect(publicResolver.get('shadowPluginLoaded')).toBeUndefined()
       expect(publicResolver.get('relativePluginLoaded')).toBe(true)
       expect(publicResolver.get('absolutePluginLoaded')).toBe(true)
+      const importModule = publicResolver.loader.importModule
+      if (importModule === undefined) throw new Error('expected the public Loader import callback')
+      const absoluteModule = await importModule(absolutePlugin, harnessBaseUrl) as { apply?: unknown }
+      expect(absoluteModule.apply).toBeTypeOf('function')
     } finally {
       await publicResolver.fiber.dispose()
     }

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Lumi warm library background</title>
+  <desc id="desc">Original soft-focus library interior for the built-in character pack.</desc>
+  <defs>
+    <linearGradient id="wall" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f1dfca"/><stop offset=".55" stop-color="#c8d9e6"/><stop offset="1" stop-color="#9db6c9"/></linearGradient>
+    <radialGradient id="light"><stop stop-color="#fff7d9" stop-opacity=".95"/><stop offset="1" stop-color="#fff7d9" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#wall)"/>
+  <circle cx="1320" cy="270" r="460" fill="url(#light)"/>
+  <g fill="#6f5b51" opacity=".68">
+    <rect x="90" y="120" width="430" height="840" rx="18"/><rect x="1400" y="100" width="430" height="860" rx="18"/>
+  </g>
+  <g fill="#ebc98d" opacity=".76">
+    <rect x="125" y="185" width="360" height="26"/><rect x="125" y="400" width="360" height="26"/><rect x="125" y="615" width="360" height="26"/><rect x="1435" y="175" width="360" height="26"/><rect x="1435" y="390" width="360" height="26"/><rect x="1435" y="605" width="360" height="26"/>
+  </g>
+  <g fill="#55718e" opacity=".72">
+    <rect x="145" y="225" width="54" height="150"/><rect x="211" y="245" width="76" height="130"/><rect x="302" y="210" width="42" height="165"/><rect x="356" y="260" width="98" height="115"/>
+    <rect x="1455" y="220" width="78" height="145"/><rect x="1545" y="250" width="52" height="115"/><rect x="1610" y="205" width="70" height="160"/><rect x="1695" y="235" width="78" height="130"/>
+  </g>
+  <path d="M0 890h1920v190H0z" fill="#6d8191" opacity=".42"/><ellipse cx="960" cy="925" rx="510" ry="72" fill="#fff7e8" opacity=".34"/>
+</svg>

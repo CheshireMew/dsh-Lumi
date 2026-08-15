@@ -1,0 +1,97 @@
+name: Lumi desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Build, sign, and publish the Windows installer as a draft GitHub release. Must run from a lumi-v* tag.
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: lumi-desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PRIMARY_NODE_VERSION: '22.23.2'
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  verify:
+    name: Verify release intent
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+
+      - name: Install (immutable, no package scripts)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Verify release identity and configuration
+        run: pnpm exec tsx scripts/verify-lumi-release.ts
+        env:
+          RELEASE_PUBLISH: ${{ inputs.publish }}
+
+  publish:
+    name: Build, sign, and stage draft release
+    if: inputs.publish
+    needs: verify
+    runs-on: windows-2025
+    environment: lumi-desktop-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      - name: Require Windows signing credentials
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK)) { throw 'WIN_CSC_LINK is required for a Lumi release.' }
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) { throw 'WIN_CSC_KEY_PASSWORD is required for a Lumi release.' }
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: Build, sign, and publish the exact installer bytes
+        run: pnpm run publish:lumi:windows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumi-windows-${{ github.ref_name }}
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest.yml
+          if-no-files-found: error
+          retention-days: 14

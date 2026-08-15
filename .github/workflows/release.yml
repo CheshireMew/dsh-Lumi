@@ -2,7 +2,7 @@
 # the apps/ entries, all on one version. The vendored framework and the native
 # packages are separate sequences with their own workflows and version lines.
 #
-# Pack runs without credentials on every pull request and master push, so a
+# Pack runs without credentials on every pull request and main push, so a
 # pull request proves the whole publish set still packs. Publication is a
 # manual dispatch from a dsh-v* tag and consumes exactly the packed bytes.
 name: Release (dsh)
@@ -10,7 +10,7 @@ name: Release (dsh)
 on:
   pull_request:
   push:
-    branches: [master]
+    branches: [main]
   workflow_dispatch:
     inputs:
       publish:
@@ -29,7 +29,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PRIMARY_NODE_VERSION: '24'
+  PRIMARY_NODE_VERSION: '22.23.2'
   DSH_TELEMETRY_DISABLED: '1'
 
 jobs:

@@ -1,6 +1,6 @@
 /**
  * The three independent publish sequences this repository releases from
- * (`packages/` + `apps/`, `vendor/`, and `native/`) and the two this module
+ * (public harness packages, `vendor/`, and `native/`) and the two this module
  * owns: `dsh` and `vendor`. Each family carries its own version baseline, tag
  * naming, and publish set, so releasing one never republishes another
  * ([rationale](../../.agents/notes/implemented/process/2026-08-10-npm-release-sequences.md)).
@@ -90,6 +90,7 @@ export abstract class ReleaseFamily {
     for (const manifestPath of manifestPaths) {
       const normalized = manifestPath.replaceAll('\\', '/')
       const manifest = readManifest(resolve(root, manifestPath))
+      if (manifest.private === true) continue
       const name = requireString(manifest, 'name', normalized)
       const version = requireString(manifest, 'version', normalized)
       if (name === WORKSPACE_ROOT_PACKAGE) throw new Error(`${normalized} selected the workspace root`)
@@ -103,6 +104,7 @@ export abstract class ReleaseFamily {
         manifest,
       })
     }
+    if (members.length === 0) throw new Error(`release family ${this.id} matched no publishable manifests`)
     return members
   }
 
@@ -193,10 +195,14 @@ export abstract class ReleaseFamily {
   abstract readonly installedEntry: InstalledEntry | undefined
 }
 
-/** `packages/*` and `apps/*`: one shared version across the whole family. */
+/** Public harness packages: one shared version across the whole family. */
 class DshFamily extends ReleaseFamily {
   readonly id = 'dsh'
-  readonly patterns = ['packages/*/*/package.json', 'apps/*/package.json'] as const
+  readonly patterns = [
+    'packages/*/*/package.json',
+    'apps/cli/package.json',
+    'apps/web/package.json',
+  ] as const
   readonly tagPrefix = 'dsh-v'
 
   /**

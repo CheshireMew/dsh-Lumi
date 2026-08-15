@@ -6,13 +6,13 @@ English | [中文](2026-07-30-vitest-jsdom-webstorage-ownership.zh.md)
 
 ## Problem
 
-The supported Node range includes releases that reserve a process-wide `globalThis.localStorage`. Node 26 exposes that property as `undefined` without `--localstorage-file`; Vitest sees the reserved key and does not project jsdom's isolated `Storage` object over it. Component suites then fail before exercising product behavior, while the primary Node 24 coverage lane remains green because that runtime does not reserve the key by default.
+Before the repository adopted Node 22-only support, its advertised range included Node 26, which reserves a process-wide `globalThis.localStorage`. Node 26 exposes that property as `undefined` without `--localstorage-file`; Vitest sees the reserved key and does not project jsdom's isolated `Storage` object over it. Component suites then failed before exercising product behavior while the former Node 24 coverage lane stayed green. The current Node 22 line does not activate this failure, but the conditional isolation remains a regression guard for any future runtime expansion.
 
 ## Decision
 
 Vitest workers disable Node's process-wide Web Storage when the runtime advertises the `--webstorage` flag. The configuration passes `--no-webstorage` through each test project's `execArgv`; runtimes without that flag receive no argument. Node-environment suites therefore stay browser-free, and files selecting jsdom through `@vitest-environment jsdom` receive jsdom's isolated `localStorage`.
 
-The Node compatibility aggregate runs a dedicated jsdom smoke on every advertised compatibility line. It asserts both the conditional worker argument and usable storage, so a future Node or Vitest change cannot leave the primary Node 24 suite as the only signal.
+The Node-floor compatibility aggregate runs a dedicated jsdom smoke on every advertised line; today that is the Node 22 floor. It asserts both the conditional worker argument and usable storage, so a future Node or Vitest change cannot expand runtime support without exercising the storage behavior.
 
 ## Alternatives considered
 

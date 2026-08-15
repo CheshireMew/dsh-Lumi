@@ -1,21 +1,28 @@
-import { appendFileSync, createWriteStream, type WriteStream } from 'node:fs'
+import { type Writable } from 'node:stream'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  app, BrowserWindow, ipcMain, screen, shell, utilityProcess,
+  app, BrowserWindow, crashReporter, dialog, ipcMain, screen, shell, utilityProcess,
   type UtilityProcess,
 } from 'electron'
+import updaterPackage from 'electron-updater'
 import { DESKTOP_RUNTIME_CONFIG } from './config.ts'
 import {
   HarnessLifecycleController, type HarnessProcess,
 } from './harness-lifecycle.ts'
 import { DESKTOP_EVENT_CHANNELS, DESKTOP_INVOKE_CHANNELS } from './ipc.ts'
+import {
+  appendBoundedLog, createDesktopLogStream, pruneDesktopDiagnostics,
+} from './diagnostics.ts'
 import { dailyLogPath, ensureDesktopPaths, type DesktopPaths } from './paths.ts'
 import {
   readWindowPlacement, resolveWindowPlacement, windowPlacementPath, writeWindowPlacement,
 } from './window-state.ts'
+import { startDesktopUpdater } from './updater.ts'
 
-const APP_NAME = 'DeepSeek Harness · Anime'
+const { autoUpdater } = updaterPackage
+
+const APP_NAME = 'Lumi'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const loadingPage = join(root, 'assets', 'loading.html')
 const preload = join(root, 'lib', 'preload.cjs')
@@ -28,14 +35,22 @@ interface WindowState {
 
 let mainWindow: BrowserWindow | undefined
 let paths: DesktopPaths | undefined
-let harnessLog: WriteStream | undefined
+let harnessLog: Writable | undefined
 let windowSaveTimer: ReturnType<typeof setTimeout> | undefined
 let allowQuit = false
 let lastHarnessUrl: string | undefined
 
 function log(level: 'INFO' | 'WARN' | 'ERROR', message: string): void {
   if (paths === undefined) return
-  appendFileSync(dailyLogPath(paths.logs, 'main'), `${new Date().toISOString()} ${level} ${message}\n`, 'utf8')
+  try {
+    appendBoundedLog(
+      dailyLogPath(paths.logs, 'main'),
+      `${new Date().toISOString()} ${level} ${message}\n`,
+      DESKTOP_RUNTIME_CONFIG.diagnostics.maxLogBytes,
+    )
+  } catch (error) {
+    console.error(`Lumi could not write its desktop log: ${String(error)}`)
+  }
 }
 
 function stateOf(window: BrowserWindow): WindowState {
@@ -63,7 +78,8 @@ function failure(stage: string, message: string, stack?: string): void {
 
 function attachWorkerOutput(child: UtilityProcess): void {
   if (paths === undefined) return
-  harnessLog = createWriteStream(dailyLogPath(paths.logs, 'harness'), { flags: 'a' })
+  harnessLog = createDesktopLogStream(paths.logs, DESKTOP_RUNTIME_CONFIG.diagnostics.maxLogBytes)
+  harnessLog.on('error', (error) => { log('WARN', `Harness log stream failed: ${error.message}`) })
   harnessLog.write(`\n${new Date().toISOString()} INFO utility process starting\n`)
   child.stdout?.pipe(harnessLog, { end: false })
   child.stderr?.pipe(harnessLog, { end: false })
@@ -75,10 +91,10 @@ interface ElectronHarnessProcess extends HarnessProcess {
 
 function spawnHarnessProcess(): ElectronHarnessProcess {
   const child = utilityProcess.fork(workerEntry, [], {
-    env: { ...process.env, DSH_ANIME_APP_VERSION: app.getVersion() },
+    env: { ...process.env, DSH_LUMI_APP_VERSION: app.getVersion() },
     cwd: process.cwd(),
     stdio: 'pipe',
-    serviceName: 'DeepSeek Harness',
+    serviceName: 'Lumi Harness',
   })
   return {
     child,
@@ -210,6 +226,8 @@ function createWindow(): BrowserWindow {
   window.webContents.on('render-process-gone', (_event, details) => {
     failure('renderer-exit', `界面进程已退出：${details.reason}。`)
   })
+  window.webContents.on('unresponsive', () => { log('WARN', 'renderer became unresponsive') })
+  window.webContents.on('responsive', () => { log('INFO', 'renderer became responsive again') })
   window.on('close', () => {
     if (windowSaveTimer !== undefined) clearTimeout(windowSaveTimer)
     windowSaveTimer = undefined
@@ -223,6 +241,25 @@ const singleInstance = app.requestSingleInstanceLock()
 if (!singleInstance) {
   app.quit()
 } else {
+  paths = ensureDesktopPaths()
+  const pruned = pruneDesktopDiagnostics(paths.logs, paths.crashes, DESKTOP_RUNTIME_CONFIG.diagnostics)
+  app.setPath('crashDumps', paths.crashes)
+  crashReporter.start({
+    productName: 'Lumi',
+    uploadToServer: false,
+    compress: false,
+    globalExtra: { product: 'Lumi', profile: 'lumi-desktop' },
+  })
+  log('INFO', `local crash capture ready; pruned ${pruned.logs} logs and ${pruned.crashes} crash reports`)
+  process.on('uncaughtExceptionMonitor', (error) => {
+    log('ERROR', `uncaught main-process exception:\n${error.stack ?? error.message}`)
+  })
+  process.on('unhandledRejection', (reason) => {
+    log('ERROR', `unhandled main-process rejection: ${reason instanceof Error ? reason.stack ?? reason.message : String(reason)}`)
+  })
+  app.on('child-process-gone', (_event, details) => {
+    log('ERROR', `child process gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode} service=${details.serviceName ?? ''} name=${details.name ?? ''}`)
+  })
   app.on('second-instance', () => {
     if (mainWindow === undefined) return
     if (mainWindow.isMinimized()) mainWindow.restore()
@@ -238,13 +275,38 @@ if (!singleInstance) {
   app.on('window-all-closed', () => { app.quit() })
 
   void app.whenReady().then(async () => {
-    paths = ensureDesktopPaths()
-    process.env.DSH_ANIME_APP_VERSION = app.getVersion()
+    process.env.DSH_LUMI_APP_VERSION = app.getVersion()
     log('INFO', `desktop ${app.getVersion()} starting`)
+    const displays = screen.getAllDisplays().map(display => ({
+      id: display.id, scaleFactor: display.scaleFactor, bounds: display.bounds,
+    }))
+    log('INFO', `display metrics: ${JSON.stringify(displays)}`)
+    screen.on('display-metrics-changed', (_event, display, changedMetrics) => {
+      log('INFO', `display ${display.id} changed ${changedMetrics.join(',')}; scaleFactor=${display.scaleFactor} bounds=${JSON.stringify(display.bounds)}`)
+    })
     registerIpc()
     mainWindow = createWindow()
     await showLaunchPage('loading', '正在启动 Harness…')
     lifecycle.start()
+    void startDesktopUpdater(autoUpdater, app.isPackaged, {
+      log,
+      async confirmInstall(version) {
+        const options: Electron.MessageBoxOptions = {
+          type: 'info',
+          title: 'Lumi 更新已就绪',
+          message: `Lumi ${version} 已下载并通过签名校验。`,
+          detail: '现在重启即可完成更新，也可以在退出 Lumi 后自动安装。',
+          buttons: ['现在重启', '稍后'],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        }
+        const result = mainWindow === undefined
+          ? await dialog.showMessageBox(options)
+          : await dialog.showMessageBox(mainWindow, options)
+        return result.response === 0
+      },
+    })
   }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error)
     failure('desktop-startup', message, error instanceof Error ? error.stack : undefined)
