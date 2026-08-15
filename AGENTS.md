@@ -87,10 +87,9 @@ When required commands fail because the agent sandbox blocks credentials, networ
 
 Before pushes, use [dsh-pre-push-checks](.agents/skills/dsh-pre-push-checks/SKILL.md); after `gh stack sync`, validate before merging.
 
-- Choose the smallest checks for each change: focused tests, model-output snapshots, `doc-sync`, published-path build/hygiene smokes, and real-API e2e. Before long commands, verify runtimes, prerequisites, and credentials without printing secrets; set outer timeouts above measured and internal limits.
-- Reuse passes until affected. After failure, rerun the smallest failing test and combine it with unaffected evidence. Run complete suites once, by request, for CI diagnosis, or after repository-wide changes.
-- Per upstream commit, resume its branch across dates and run only failed or missing steps; incomplete reports never warrant new branches or repeated passes. Log each long command's commit, start/end, outcome, and path.
-- `test:coverage`, not `test`, is the CI coverage gate ([why](docs/testing.md)).
+- Before local tests, inspect the latest completed failed public CI run once. Run the smallest affected checks on the current Windows host; never poll GitHub Actions.
+- Active development uses focused logical-batch tests. Full coverage, E2E, matrices, packaging, signing, and release checks need a freeze, release candidate, or explicit request; checks over 15 minutes need prior approval.
+- Reuse unaffected passes and rerun only the smallest failure. Resume exact branches across dates. `test:coverage` is the CI gate; a successful non-force push ends the task ([decision](.agents/notes/implemented/process/2026-08-16-development-stage-verification.md)).
 
 ## Secrets / .env
 

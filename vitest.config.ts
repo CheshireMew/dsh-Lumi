@@ -89,11 +89,12 @@ const testIncludes = [
   'scripts/**/*.spec.ts',
 ]
 
-// Fork-heavy Git, compiler, real-CLI, and subprocess suites saturate Windows
-// process creation well before the host's logical CPU count. One worker per
-// sequential Windows shard avoids fork collisions; run-unit-tests
-// bounds each Vitest process's lifetime. Linux and CI scheduling is unchanged.
-const windowsMaxWorkers = process.platform === 'win32' ? 1 : undefined
+// Node 22 runs ordinary fork-isolated suites with a small concurrency budget
+// on Windows. Suites that own process-global state or timing-sensitive
+// subprocesses remain single-worker; run-unit-tests still bounds process
+// lifetime with sequential shards. Linux and CI scheduling is unchanged.
+const windowsThreadSafeMaxWorkers = process.platform === 'win32' ? 2 : undefined
+const windowsProcessBoundMaxWorkers = process.platform === 'win32' ? 1 : undefined
 
 // The instrumented coverage gate sets this env; the exempt heavy suites then
 // run beside it uninstrumented (membership contract in scripts/coverage-exempt.ts).
@@ -123,7 +124,6 @@ const processBoundTests = [
 export default defineConfig({
   plugins: [pathsPlugin(), standardDecoratorPlugin()],
   test: {
-    ...windowsMaxWorkers === undefined ? {} : { maxWorkers: windowsMaxWorkers },
     setupFiles: ['./scripts/test-invariants.ts'],
     // .tsx: client component specs (jsdom via per-file @vitest-environment pragma).
     include: testIncludes,
@@ -135,7 +135,7 @@ export default defineConfig({
         plugins: [pathsPlugin(), standardDecoratorPlugin()],
         test: {
           name: 'thread-safe',
-          ...windowsMaxWorkers === undefined ? {} : { maxWorkers: windowsMaxWorkers },
+          ...windowsThreadSafeMaxWorkers === undefined ? {} : { maxWorkers: windowsThreadSafeMaxWorkers },
           execArgv: vitestExecArgv,
           // Node 24 has aborted in its CJS lexer (v8::ToLocalChecked Empty
           // MaybeLocal in cjs_lexer::Parse) from worker threads on macOS,
@@ -154,7 +154,7 @@ export default defineConfig({
         plugins: [pathsPlugin(), standardDecoratorPlugin()],
         test: {
           name: 'process-bound',
-          ...windowsMaxWorkers === undefined ? {} : { maxWorkers: windowsMaxWorkers },
+          ...windowsProcessBoundMaxWorkers === undefined ? {} : { maxWorkers: windowsProcessBoundMaxWorkers },
           execArgv: vitestExecArgv,
           pool: 'forks',
           setupFiles: ['./scripts/test-invariants.ts'],
