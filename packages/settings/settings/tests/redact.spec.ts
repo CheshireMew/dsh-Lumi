@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { redactSecrets, settingsNamespace } from '../src/index.ts'
+import { redactSecrets, schemaForWire, settingsNamespace } from '../src/index.ts'
 import { MemorySettings } from './memory.ts'
 
 const Profile = z.object({
@@ -56,23 +56,22 @@ describe('redactSecrets', () => {
     ])
   })
 
-  it('never mutates the input and preserves keys outside the schema', () => {
+  it('never mutates the input and omits fields the schema cannot prove safe', () => {
     const input = Object.freeze({
       apiKey: 'frozen',
       extra: Object.freeze({ keep: true }),
     })
     const { value } = redactSecrets(Adapter as z<never>, input)
     expect(input.apiKey).toBe('frozen')
-    expect(value).toEqual({ extra: { keep: true }, nested: undefined } as never)
-    expect((value as { extra: unknown }).extra).toEqual({ keep: true })
+    expect(value).toEqual({})
   })
 
-  it('passes malformed container values through untouched', () => {
+  it('omits malformed container values instead of passing them through', () => {
     const { value, secrets } = redactSecrets(Adapter as z<never>, {
       providers: 'not-a-dict',
       fallbacks: 'not-an-array',
     })
-    expect(value).toEqual({ providers: 'not-a-dict', fallbacks: 'not-an-array' })
+    expect(value).toEqual({})
     expect(secrets).toEqual([
       { path: ['apiKey'], set: false },
       { path: ['nested', 'token'], set: false },
@@ -97,9 +96,57 @@ describe('redactSecrets', () => {
   })
 
   it('tolerates structural nodes missing their relation maps', () => {
-    expect(redactSecrets({ type: 'dict' } as never, { k: 'v' })).toEqual({ value: { k: 'v' }, secrets: [] })
-    expect(redactSecrets({ type: 'object' } as never, { k: 'v' })).toEqual({ value: { k: 'v' }, secrets: [] })
-    expect(redactSecrets({ type: 'array' } as never, ['v'])).toEqual({ value: ['v'], secrets: [] })
+    expect(redactSecrets({ type: 'dict' } as never, { k: 'v' })).toEqual({ value: undefined, secrets: [] })
+    expect(redactSecrets({ type: 'object' } as never, { k: 'v' })).toEqual({ value: {}, secrets: [] })
+    expect(redactSecrets({ type: 'array' } as never, ['v'])).toEqual({ value: undefined, secrets: [] })
+  })
+
+  it('selects union branches and combines intersection fields before redaction', () => {
+    const Variant = z.union([
+      z.object({ kind: z.const('token'), token: z.string().role('secret'), label: z.string() }),
+      z.object({ kind: z.const('plain'), label: z.string() }),
+    ])
+    const Combined = z.intersect([
+      z.object({ visible: z.string() }),
+      z.object({ secret: z.string().role('secret') }),
+    ])
+    expect(redactSecrets(Variant as never, { kind: 'token', token: 'branch-secret', label: 'shown' })).toEqual({
+      value: { kind: 'token', label: 'shown' },
+      secrets: [{ path: ['token'], set: true }],
+    })
+    expect(redactSecrets(Combined as never, { visible: 'shown', secret: 'hidden' })).toEqual({
+      value: { visible: 'shown' },
+      secrets: [{ path: ['secret'], set: true }],
+    })
+  })
+
+  it('treats transform output as one opaque write-only slot', () => {
+    const Transformed = z.object({
+      wrapped: z.transform(
+        z.object({ token: z.string().role('secret') }),
+        value => value,
+      ),
+    })
+    expect(redactSecrets(Transformed as never, { wrapped: { token: 'hidden' } })).toEqual({
+      value: {},
+      secrets: [{ path: ['wrapped'], set: true }],
+    })
+  })
+
+  it('scrubs secret literals from serialized schema defaults and const nodes', () => {
+    const SecretDefaults = z.object({
+      token: z.string().role('secret').default('leaf-secret'),
+      branch: z.union([
+        z.object({ kind: z.const('secret-kind'), value: z.string().role('secret') }),
+        z.object({ kind: z.const('plain-kind') }),
+      ]).default({ kind: 'secret-kind', value: 'branch-secret' }),
+    }).default({ token: 'root-secret', branch: { kind: 'secret-kind', value: 'root-branch-secret' } })
+    const serialized = JSON.stringify(schemaForWire(SecretDefaults as never))
+    expect(serialized).not.toContain('leaf-secret')
+    expect(serialized).not.toContain('branch-secret')
+    expect(serialized).not.toContain('root-secret')
+    expect(serialized).not.toContain('root-branch-secret')
+    expect(serialized).toContain('secret-kind')
   })
 })
 
@@ -148,7 +195,7 @@ describe('describe() layers and redaction', () => {
   it('redacts a descriptor that has neither base nor user layer', async () => {
     const ctx = await boot()
     ctx.settings.register(NS, Profile)
-    const [descriptor] = ctx.settings.describe({ redactSecrets: true })
+    const [descriptor] = ctx.settings.describeForWire()
     expect(descriptor).not.toHaveProperty('base')
     expect(descriptor).not.toHaveProperty('user')
     expect(descriptor?.secrets).toEqual([{ path: ['apiKey'], set: false }])
@@ -157,7 +204,7 @@ describe('describe() layers and redaction', () => {
   it('redacts every layer and enumerates secret slots under redactSecrets', async () => {
     const ctx = await boot({ adapter: { apiKey: 'user-key', baseURL: 'https://user' } })
     ctx.settings.register(NS, Profile, { base: { apiKey: 'entry-key' } })
-    const [descriptor] = ctx.settings.describe({ redactSecrets: true })
+    const [descriptor] = ctx.settings.describeForWire()
     expect(descriptor?.value).toEqual({ baseURL: 'https://user' })
     expect(descriptor?.base).toEqual({})
     expect(descriptor?.user).toEqual({ baseURL: 'https://user' })

@@ -13,9 +13,9 @@ import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import { DirectoryPickerError } from '@deepseek-ai/dsh-host-directory-picker'
 import type { DirectoryPickerCapability } from '@deepseek-ai/dsh-host-directory-picker'
 import WorkspaceRegistry from '@deepseek-ai/dsh-workspace'
-import type { HostFrame, WorkspaceId } from '@deepseek-ai/dsh-host-apiproxy/api'
-import type { RpcRequest, RpcResponse } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
-import { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
+import type { HostFrame, WorkspaceId } from '@deepseek-ai/dsh-api-protocol/api'
+import type { RpcRequest, RpcResponse } from '@deepseek-ai/dsh-api-protocol/api/rpc'
+import { RpcId } from '@deepseek-ai/dsh-api-protocol/api/rpc'
 import { createApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 
@@ -75,7 +75,10 @@ async function harness(
   const storageDomain = new DomainFacility(ctx, { backend: 'memory', routes: {} })
   ctx.storage.mount('domain', storageDomain)
   ctx.provide('storageDomain', storageDomain)
-  ctx.provide('sessionPersistence', { list: () => Promise.resolve([]) } as never)
+  ctx.provide('sessionPersistence', {
+    list: () => Promise.resolve([]),
+    listSnapshots: () => Promise.resolve([]),
+  } as never)
   await ctx.plugin(WorkspaceRegistry)
 
   const factory: AgentFactory = {
@@ -412,6 +415,21 @@ describe('session creation and Workspace membership', () => {
 })
 
 describe('Host Workspace increments', () => {
+  it('forwards authoritative permanent Session deletion distinctly from activation removal', async () => {
+    const { api, ctx } = await harness()
+    const abort = new AbortController()
+    const stream: AsyncIterator<RpcRequest<HostFrame>> =
+      api.events.host(request({}), abort.signal)[Symbol.asyncIterator]()
+    const deleted = nextHostFrame(stream)
+
+    ctx.emit('session-persistence/deleted', SessionId('deleted-elsewhere'))
+
+    expect(await deleted).toMatchObject({
+      payload: { type: 'host/session-deleted', sessionId: 'deleted-elsewhere' },
+    })
+    abort.abort()
+  })
+
   it('projects subagent origin in attached summaries and creation increments', async () => {
     const { api, ctx } = await harness()
     const abort = new AbortController()
@@ -565,6 +583,27 @@ describe('Host Workspace increments', () => {
       ok: false,
       error: { code: 'session-not-found', details: { sessionId: 'session-ghost' } },
     })
+    abort.abort()
+  })
+
+  it('restores an archived session and streams the complete archive set', async () => {
+    const { api, root } = await harness()
+    const workspace = expectOk(await api.workspace.create(request({ path: stageDir(root, 'restore-home') }))).workspace
+    const sessionId = SessionId('session-to-restore')
+    expectOk(await api.sessions.create(request({ workspaceId: workspace.workspaceId, sessionId })))
+    expectOk(await api.workspace.archiveSession(request({ sessionId })))
+
+    const abort = new AbortController()
+    const stream: AsyncIterator<RpcRequest<HostFrame>> =
+      api.events.host(request({}), abort.signal)[Symbol.asyncIterator]()
+    const changed = nextHostFrame(stream)
+
+    expect(expectOk(await api.workspace.unarchiveSession(request({ sessionId }))).archivedSessionIds)
+      .toEqual([])
+    expect(await changed).toMatchObject({
+      payload: { type: 'host/archived-sessions-changed', archivedSessionIds: [] },
+    })
+    expect(expectOk(await api.workspace.list(request({}))).archivedSessionIds).toEqual([])
     abort.abort()
   })
 })

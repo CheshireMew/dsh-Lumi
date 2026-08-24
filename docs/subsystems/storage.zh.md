@@ -51,12 +51,14 @@ interface StorageBackend {
 领域由其拥有包声明一次，形式是一个 spec 对象——它是该领域的身份、布局和记录 schema 的单一来源（schema 用 zod 编写，因此 `z.infer` 让消费方类型无需重复声明）：
 
 ```ts type-equiv
-/** Static declaration of one domain: identity, version, and record layout. */
+/** Static declaration of one domain: identity, version, record layout, and recovery policy. */
 interface DomainSpec {
   /** Domain name; must match `UNIT_NAME_RE` (doubles as the backend unit name). */
   readonly name: string
   /** Domain format version; a medium stamped with a different version rejects at open. */
   readonly version: number
+  /** Damage handling. `reject` is the default; `reset` is only for fully derived data. */
+  readonly recovery?: DomainRecovery
   /** Optional global singleton slot. */
   readonly global?: DomainGlobalSpec<unknown>
   /** Table declarations keyed by table name; each name must match `UNIT_NAME_RE`. */
@@ -122,7 +124,7 @@ interface DomainChangedBase {
 type DomainChanged = DomainChangedPut | DomainChangedDeleted
 ```
 
-`put`（插入、覆写和 global 写入）在 `value` 中携带新快照——绝不携带旧值；需要做差异比较的消费方自行保留上一份快照。`deleted` 是不携带值的墓碑。该事件是通知，不是事务参与者：发出时提交点已经过去，因此同步抛出的监听器会被兜住并记录一条警告，而不会让已经持久的写入被拒绝；发出的值等于发出时刻的内存态。该事件仅限进程内；跨进程的变更推送是一项已记录的限制（[包 README](../../packages/storage/storage-domain/README.md)）。
+`put`（插入、覆写和 global 写入）在 `value` 中携带新快照——绝不携带旧值；需要做差异比较的消费方自行保留上一份快照。`deleted` 是不携带值的墓碑。该事件是通知，不是事务参与者：发出时提交点已经过去，因此同步抛出的监听器会被兜住并记录一条警告，而不会让已经持久的写入被拒绝；发出的值等于发出时刻的内存态。该事件仅限进程内。产品启动器会强制每个规范化 `$DSH_HOME` 只能有一个 Host，重新连接的客户端会从该 Host 读取当前快照；直接多进程嵌入需要自行同步变更（[包 README](../../packages/storage/storage-domain/README.md)）。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -170,9 +172,12 @@ The mounted domain facility. Opens declared domains over routed backends; one fa
  * name that is already open (`already-open`); resolve the backend route
  * (`backend-not-found` passes through from the hub); require its `kv` facet
  * (`facet-unsupported`); open the unit projected from the spec (backend
- * `version-mismatch`/`malformed-medium` pass through); load and validate
- * every stored record against the spec's zod schemas (`invalid-record`
- * with the offending table and key); construct the domain.
+ * `version-mismatch`/`malformed-medium` pass through by default); load and
+ * validate every stored record against the spec's zod schemas
+ * (`invalid-record` with the offending table and key); construct the
+ * domain. A spec declaring `recovery: 'reset'` discards and reopens its
+ * unit once for those three damage failures only. Routing, capability,
+ * lifecycle, and I/O failures always propagate.
  *
  * Lifecycle: the CALLER owns the returned handle and closes it via
  * `Domain.close()` (typically as its own `ctx.effect` disposer) — the
@@ -201,7 +206,7 @@ get(name: string): DomainImpl | undefined
 async closeAll(): Promise<void>
 ```
 
-Source: [`packages/storage/storage-domain/src/index.ts:69`](../../packages/storage/storage-domain/src/index.ts)
+Source: [`packages/storage/storage-domain/src/index.ts:70`](../../packages/storage/storage-domain/src/index.ts)
 
 <a id="domain-events"></a>
 

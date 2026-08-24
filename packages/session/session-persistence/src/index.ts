@@ -13,11 +13,19 @@ import type { SessionPersistenceRevision } from './revision.ts'
 // Re-export the metadata vocabulary so Consumers import it from the Service Definition.
 export type { SessionHeader } from '@deepseek-ai/dsh-session'
 export { SessionPersistenceRevision } from './revision.ts'
+export {
+  knownSessionIds,
+  pruneUnknownSessionRows,
+  type LiveSessionIdentity,
+  type SessionSidecarRows,
+} from './known-sessions.ts'
 
 /** Lightweight immutable source identity returned without loading a full log. */
 export interface SessionPersistenceSnapshot {
   /** Detached metadata for one materialized session. */
   header: SessionHeader
+  /** Exact latest direct human-prompt time, or `null` before the first prompt. */
+  lastPromptAt: number | null
   /** Opaque source-qualified token that changes whenever this stored log changes. */
   revision: SessionPersistenceRevision
 }
@@ -46,6 +54,7 @@ export {
   DEFAULT_WRITE_BATCH_MAX_DELAY_MS,
   MAX_WRITE_BATCH_DELAY_MS,
   PersistenceCoordinator,
+  SessionPersistenceNotFoundError,
   SessionFormatUnsupportedError,
   SessionPersistenceCorruptionError,
   sessionFormatVersionRefusal,
@@ -60,6 +69,17 @@ export type {
 declare module '@deepseek-ai/cordis' {
   interface Context {
     sessionPersistence: SessionPersistence
+  }
+
+  interface Events {
+    /**
+     * A session identity left authoritative persistence. Consumers use this
+     * post-commit notification to discard derived records; startup
+     * reconciliation remains responsible for interrupted cleanup.
+     * @param sessionId - Deleted session identity.
+     * @mode emit
+     */
+    'session-persistence/deleted'(sessionId: SessionId): void
   }
 }
 
@@ -141,6 +161,18 @@ export abstract class SessionPersistence extends Service {
    * @param events - the contiguous batch to persist, in seq order.
    */
   abstract append(id: SessionId, events: readonly SessionEvent[]): Promise<void>
+
+  /**
+   * Permanently remove one non-live session log. Operations for the same id
+   * remain serialized with append, repair, and retirement. Deleting a pending
+   * lazy create cancels that unpublished identity without creating storage;
+   * deleting an unknown id rejects. A post-commit
+   * `session-persistence/deleted` event asks derived stores to discard their
+   * records, while those stores also reconcile at startup after a crash.
+   * @param id - Session identity to remove.
+   * @param signal - Optional cancellation while queued before deletion starts.
+   */
+  abstract delete(id: SessionId, signal?: AbortSignal): Promise<void>
 
   /**
    * Prepare the exact unpublished Session used by resume. Implementations may

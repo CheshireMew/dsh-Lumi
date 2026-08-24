@@ -18,7 +18,7 @@ import { snapshotJsonValue } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 // Empty type import: applies the package's cordis Context merge
 // (`ctx.sessionPersistence`), which this service reads on the cold path.
-import type {} from '@deepseek-ai/dsh-session-persistence'
+import { pruneUnknownSessionRows } from '@deepseek-ai/dsh-session-persistence'
 import type { ProjectionCheckpoint, ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { projectionCacheDomainSpec } from './spec.ts'
@@ -85,6 +85,7 @@ export class SessionProjectionCache extends Service {
     const domain = await this.ctx.storageDomain.open(projectionCacheDomainSpec)
     this.ctx.effect(() => () => domain.close(), 'sessionProjectionCache.domainClose')
     this.table = domain.table('sessions')
+    await this.pruneDeletedRows()
     this.installWritePath()
   }
 
@@ -229,6 +230,10 @@ export class SessionProjectionCache extends Service {
       this.dirty.delete(session)
     })
 
+    this.ctx.on('session-persistence/deleted', (sessionId: SessionId) => {
+      void this.deleteSoft(sessionId, 'post-delete cleanup')
+    })
+
     // Clear pending timers with the plugin (their sessions outlive the cache).
     this.ctx.effect(() => () => {
       for (const state of this.dirty.values()) {
@@ -277,6 +282,24 @@ export class SessionProjectionCache extends Service {
       await this.put(id, identity, rows)
     } catch (error) {
       this.ctx.logger.warn(`session projection cache: ${what} for "${id}" failed (cache stays stale): ${String(error)}`)
+    }
+  }
+
+  /** Remove cache rows whose authoritative session logs no longer exist. */
+  private async pruneDeletedRows(): Promise<void> {
+    await pruneUnknownSessionRows(
+      this.ctx.sessionPersistence,
+      this.ctx.sessions.list(),
+      this.requireTable(),
+    )
+  }
+
+  /** Fail-soft post-commit cleanup; startup reconciliation retries interruptions. */
+  private async deleteSoft(id: SessionId, what: string): Promise<void> {
+    try {
+      await this.requireTable().delete(id)
+    } catch (error: unknown) {
+      this.ctx.logger.warn(`session projection cache: ${what} for "${id}" failed: ${String(error)}`)
     }
   }
 

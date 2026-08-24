@@ -277,6 +277,57 @@ export function runPersistenceContract(name: string, make: () => Promise<Contrac
       }
     })
 
+    it('permanently deletes a materialized log and permits a new lifecycle under the released id', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const first = meta('deleted-materialized', '/first')
+        await persistence.create(first)
+        await persistence.append(first.id, oneTurnLog())
+
+        await persistence.delete(first.id)
+        expect((await persistence.list()).map(header => header.id)).not.toContain(first.id)
+        expect((await persistence.listSnapshots()).map(snapshot => snapshot.header.id)).not.toContain(first.id)
+        await expect(persistence.inspect(first.id)).rejects.toThrow('not found')
+
+        const replacement = { ...meta('deleted-materialized', '/second'), createdAt: 2000 }
+        await persistence.create(replacement)
+        await persistence.append(replacement.id, oneTurnLog())
+        expect((await persistence.load(replacement.id)).meta).toMatchObject({ cwd: '/second', createdAt: 2000 })
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('cancels an unmaterialized lazy create and rejects a definitely unknown deletion', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const pending = meta('deleted-lazy')
+        await persistence.create(pending)
+        await persistence.delete(pending.id)
+        await persistence.create(pending)
+        await persistence.append(pending.id, oneTurnLog())
+        await expect(persistence.delete(SessionId('never-created')))
+          .rejects.toThrow('cannot delete unknown session')
+        expect((await persistence.list()).map(header => header.id)).toContain(pending.id)
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('honors deletion cancellation before destructive work starts', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const target = meta('delete-cancelled')
+        await persistence.create(target)
+        await persistence.append(target.id, oneTurnLog())
+        const reason = new Error('delete cancelled')
+        await expect(persistence.delete(target.id, AbortSignal.abort(reason))).rejects.toBe(reason)
+        expect((await persistence.list()).map(header => header.id)).toContain(target.id)
+      } finally {
+        await dispose()
+      }
+    })
+
     it('rejects pre-aborted observation reads with the exact cancellation reason', async () => {
       const { persistence, dispose } = await make()
       try {
@@ -341,6 +392,7 @@ export function runPersistenceContract(name: string, make: () => Promise<Contrac
         const first = (await persistence.listSnapshots()).find(snapshot => snapshot.header.id === m.id)
         const repeated = (await persistence.listSnapshots()).find(snapshot => snapshot.header.id === m.id)
         expect(first).toBeDefined()
+        expect(first?.lastPromptAt).toBe(2)
         expect(repeated?.revision).toBe(first?.revision)
 
         await persistence.append(m.id, [{
@@ -351,6 +403,45 @@ export function runPersistenceContract(name: string, make: () => Promise<Contrac
         }])
         const changed = (await persistence.listSnapshots()).find(snapshot => snapshot.header.id === m.id)
         expect(changed?.revision).not.toBe(first?.revision)
+        expect(changed?.lastPromptAt).toBe(2)
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('indexes only direct human prompts and advances with later durable batches', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const m = meta('last-human-prompt')
+        await persistence.create(m)
+        await persistence.append(m.id, oneTurnLog())
+        await persistence.append(m.id, [{
+          type: 'user/message',
+          seq: 6,
+          time: 20,
+          data: freezeMessage({
+            id: MessageId('plugin-user'),
+            role: 'user',
+            content: [{ type: 'text', text: 'injected' }],
+            source: { kind: 'plugin', plugin: 'test', form: 'relay' },
+          }),
+          surfaceOp: 'append',
+        }])
+        expect((await persistence.listSnapshots())[0]?.lastPromptAt).toBe(2)
+
+        await persistence.append(m.id, [{
+          type: 'user/message',
+          seq: 7,
+          time: 30,
+          data: freezeMessage({
+            id: MessageId('second-human'),
+            role: 'user',
+            content: [{ type: 'text', text: 'again' }],
+            source: { kind: 'user' },
+          }),
+          surfaceOp: 'append',
+        }])
+        expect((await persistence.listSnapshots())[0]?.lastPromptAt).toBe(30)
       } finally {
         await dispose()
       }

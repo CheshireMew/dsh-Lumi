@@ -4,6 +4,8 @@
 
 DeepSeek Harness 存储中心的领域数据形式：在所有已配置的后端注册后，公开可注入的 `ctx.storageDomain` 服务及对应的 `ctx.storage.domain` 投影。一个领域通过 `defineDomain`（zod 记录 schema、从 `z.infer` 派生的类型）声明一次，通过 `DomainFacility.open` 打开，并由具有最终决定权的内存状态提供服务：读取同步执行；写入在每个领域各自的一条链上串行化，先在已路由后端达到持久状态，再更新内存并发出 `domain/changed`。打开领域的消费方负责管理句柄的生命周期，并通过 `Domain.close()` 释放它（幂等；通常作为其自身的 `ctx.effect` 资源释放函数）；插件卸载时，该设施会关闭仍处于打开状态的领域。
 
+打开时的恢复策略属于领域声明。默认的 `recovery: 'reject'` 会保留介质并原样抛出所有失败。完全由其它数据派生的领域可以声明 `recovery: 'reset'`；只有 `version-mismatch`、`malformed-medium` 和存储记录 `invalid-record` 这三类损坏才会移除已关闭单元并重试一次。路由错误、不支持的 facet、生命周期错误和普通 I/O 故障仍会明确失败。出厂的 `session_projcache` 域采用 reset；具有权威性的 workspace 和 feedback 域继续采用 reject。
+
 设计原理、打开语义和存储／领域分层见 [Agent Note](../../../.agents/notes/proposed/architecture/2026-07-24-domain-kv-storage-and-workspace.zh.md)。
 
 ## 配置
@@ -31,5 +33,5 @@ DeepSeek Harness 存储中心的领域数据形式：在所有已配置的后端
 
 ## 已知限制与暂缓事项
 
-- **变更只在单进程内可见**：`domain/changed` 是进程内事件；在 Agent Note 暂缓的跨进程修订模式落地前，第二个主机进程或重新连接的 GUI 无法观察变更。
+- **变更只在单进程内可见**：`domain/changed` 是进程内事件。随附的 `dsh` 启动器会排除使用同一规范化 `$DSH_HOME` 的第二个 Host，重新连接的产品客户端会从该 Host 取得当前快照；直接多进程嵌入仍需自行实现修订或重新同步协议。
 - **没有跨表事务、二级索引或多段键**：每次写入只触碰一条记录；这些扩展的触发点和返工点列在 Agent Note 的暂缓工作清单中。

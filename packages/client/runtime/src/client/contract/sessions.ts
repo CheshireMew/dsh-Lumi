@@ -12,15 +12,18 @@ import type {
   RpcResult, SessionId, SubagentAddress,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { HostObservable, SessionMaybeProvideInfo } from '@deepseek-ai/dsh-client-ui-slots'
-import type { AgentContext } from '../agents/scope.ts'
-import type { SessionSearchResultItem } from '../sessions/manager.ts'
 import type {
-  SessionBinding, SessionListState, SessionProvideDescriptor,
-} from '../sessions/service.ts'
+  SessionBinding, SessionListState, SessionProvideDescriptor, SessionSearchResultItem,
+} from './session-list.ts'
+import type { AgentContext } from './agent-scope.ts'
 import type { SessionFace } from './session.ts'
 import type { ObservableSnapshot } from './store.ts'
 
-export type { AgentContext } from '../agents/scope.ts'
+export type { AgentContext } from './agent-scope.ts'
+export type {
+  SessionBinding, SessionListState, SessionProvideContribution, SessionProvideDescriptor,
+  SessionSearchResultItem, SessionSummary,
+} from './session-list.ts'
 
 /** The sessions-service face injected as `ctx.sessions`. */
 export interface ISessions {
@@ -95,6 +98,13 @@ export interface ISessions {
    * @throws when the fork fails, or when a requested child-title rename fails after creation.
    */
   fork(opts: { sessionId: SessionId; atSeq?: number; increaseTitle?: boolean }): Promise<SessionId>
+  /**
+   * Permanently delete a cold session and optionally its descendant tree.
+   * @param sessionId - root identity to delete.
+   * @param recursive - whether descendants may be deleted child-first.
+   * @returns identities actually removed, in child-first order.
+   */
+  delete(sessionId: SessionId, recursive?: boolean): Promise<readonly SessionId[]>
   /**
    * Register a per-session standard-props provider (hooks become `use<Name>`
    * selector hooks on the render side; props spread verbatim).

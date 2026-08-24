@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { PRODUCT_VERSION } from '@deepseek-ai/dsh-product-identity'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import type {
@@ -373,7 +374,7 @@ describe('CodexAppServerWire', () => {
       clientInfo: {
         name: 'deepseek-harness',
         title: 'DeepSeek Harness',
-        version: '0.0.1',
+        version: PRODUCT_VERSION,
       },
       capabilities: {
         experimentalApi: false,

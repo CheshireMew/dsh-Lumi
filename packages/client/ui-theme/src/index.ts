@@ -32,7 +32,9 @@ function readPreference(ctx: Context): ThemePreference {
  */
 export function apply(ctx: Context): void {
   ctx.inject(['settings'], (settingsCtx) => {
-    settingsCtx.settings.register(THEME_NAMESPACE, ThemeSettingsSchema)
+    settingsCtx.settings.register(THEME_NAMESPACE, ThemeSettingsSchema, {
+      surfaces: ['configuration-client'],
+    })
   })
   ctx.inject(['webServer'], (httpCtx) => {
     httpCtx.effect(

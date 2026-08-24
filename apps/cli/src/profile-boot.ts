@@ -39,6 +39,7 @@ const SHIPPED_PRESET_ROOT = fileURLToPath(new URL('../config/agent-presets/', im
 import { DSH_LAUNCH_ENVIRONMENT_KEY, type LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
 import { provideCmdline } from '@deepseek-ai/dsh-cmdline'
 import { createProcessShutdown, type ProcessShutdown } from './process-shutdown.ts'
+import { acquireDshHomeLease, type DshHomeLease } from './home-lease.ts'
 
 export type { ProcessShutdown } from './process-shutdown.ts'
 
@@ -227,30 +228,49 @@ function suppressShutdownError(ctx: Context, signal: AbortSignal, error: unknown
  * @returns the settled root context and the shutdown controller.
  */
 export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Context; shutdown: ProcessShutdown }> {
-  const composed = composeProfile(
-    options.profile,
-    options.patchFiles,
-    options.installAnchor ?? INSTALL_ANCHOR,
-    options.initialBundles,
-  )
   const app: { current?: Context } = {}
-  const shutdown = createProcessShutdown(async () => { await app.current?.fiber.dispose() })
+  // Shutdown cleanup is registered before lease acquisition and captures the later assignment.
+  // oxlint-disable-next-line eslint/prefer-const
+  let lease: DshHomeLease | undefined
+  const disposeApplication = async (): Promise<void> => {
+    try {
+      await app.current?.fiber.dispose()
+    } finally {
+      await lease?.release()
+    }
+  }
+  const shutdown = createProcessShutdown(disposeApplication)
   const signalShutdown = new AbortController()
   const interrupt = (code: number): void => {
     signalShutdown.abort()
     shutdown.interrupt(code)
   }
-  // Signals own teardown throughout the startup window, not only after boot()
-  // settles: an inserted provider can publish before sibling rows finish mounting.
+  // Signals and detached startup failures own teardown before profile
+  // resolution mutates any Harness-home file.
+  process.on('SIGTERM', () => { interrupt(0) })
+  process.on('SIGINT', () => { interrupt(130) })
+  installFailLoud(NAME, process, disposeApplication)
+  lease = await acquireDshHomeLease(resolveDshHome(), options.profile, (error) => {
+    process.stderr.write(`dsh: ${error.message}\n`)
+    shutdown.interrupt(1)
+  })
+  let composed: ComposedProfile
+  try {
+    composed = composeProfile(
+      options.profile,
+      options.patchFiles,
+      options.installAnchor ?? INSTALL_ANCHOR,
+      options.initialBundles,
+    )
+  } catch (error) {
+    await disposeApplication()
+    throw error
+  }
+  // Signals own teardown throughout the startup window: an inserted provider
+  // can publish before sibling rows finish mounting.
   // SIGTERM is a supervisor's ordinary stop request and exits 0 on every
   // surface — the launcher does not know whether the app considered its work
   // complete; SIGINT is a user interrupt and reports 130.
-  process.on('SIGTERM', () => { interrupt(0) })
-  process.on('SIGINT', () => { interrupt(130) })
-  installFailLoud(NAME, process, async () => {
-    await app.current?.fiber.dispose()
-  })
-
   const rootConfig = join(composed.profile.dir, PROFILE_ROOT_FILENAME)
   // Recomposition for the live user layers: bundle layers below, overlays
   // above, so a user edit can never displace them. Parsed app arguments are
@@ -272,18 +292,24 @@ export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Con
   ])
   // Cloned for the same insert-aliasing reason as composeLive: the boot
   // application must not mutate the objects later reloads recompose from.
-  const ctx = await boot(NAME, rootConfig, structuredClone(allPatches(composed)), (hostCtx) => {
-    app.current = hostCtx
-    // Before any config-tree entry mounts, so plugins resolve all launch-time
-    // environment values from the same immutable provenance snapshot.
-    hostCtx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, options.environment)
-    // The command line and bounded exit request are launcher facts available
-    // to every app plugin that injects the argument snapshot.
-    provideCmdline(hostCtx, {
-      args: options.args,
-      exit: code => void shutdown.shutdown(code),
-    })
-  }, pathToFileURL(rootConfig).href)
+  let ctx: Context
+  try {
+    ctx = await boot(NAME, rootConfig, structuredClone(allPatches(composed)), (hostCtx) => {
+      app.current = hostCtx
+      // Before any config-tree entry mounts, so plugins resolve all launch-time
+      // environment values from the same immutable provenance snapshot.
+      hostCtx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, options.environment)
+      // The command line and bounded exit request are launcher facts available
+      // to every app plugin that injects the argument snapshot.
+      provideCmdline(hostCtx, {
+        args: options.args,
+        exit: code => void shutdown.shutdown(code),
+      })
+    }, pathToFileURL(rootConfig).href)
+  } catch (error) {
+    await disposeApplication()
+    throw error
+  }
   app.current = ctx
   // A surface can dispose the whole tree while boot or this post-boot watcher
   // setup is still in flight — a signal, or a fast one-shot's appExit. Loader

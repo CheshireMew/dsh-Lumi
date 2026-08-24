@@ -454,6 +454,13 @@
   font-size: 13px;
 }
 
+.flatSectionLabel {
+  padding: 12px 8px 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
 /* Rename dialog form (same figma dialog family as the create modals). */
 .renameInput {
   box-sizing: border-box;

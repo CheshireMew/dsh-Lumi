@@ -9,11 +9,11 @@
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { readdirSync } from 'node:fs'
-import { open, mkdir, readFile, readdir, realpath, link, rm, stat, truncate } from 'node:fs/promises'
+import { open, mkdir, readFile, readdir, realpath, link, rename, rm, rmdir, stat, truncate } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { scheduler } from 'node:timers/promises'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   DEFAULT_PREPARED_SESSION_CACHE_SIZE, DEFAULT_WRITE_BATCH_MAX_DELAY_MS, MAX_WRITE_BATCH_DELAY_MS,
   SessionPersistence, SessionPersistenceRevision, PersistenceCoordinator, SessionFormatUnsupportedError,
@@ -21,6 +21,7 @@ import {
   type SessionInspection, type SessionPersistenceRevision as PersistenceRevision, type SessionRawArtifact,
   type StoredPrefix,
 } from '@deepseek-ai/dsh-session-persistence'
+import { advanceLastHumanPromptAt } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionHeader, SessionPreparation } from '@deepseek-ai/dsh-session'
 import {
   encodeSegment, eventLines, logPath, logSuffix, parseHeaderMeta, projectDir, scanLog, sessionDir,
@@ -30,7 +31,7 @@ import {
 import {
   compressZstdFrame, createZstdFrameDecoder, decompressZstdFrame, decompressZstdPrefix, scanZstdFrames,
 } from './zstd.ts'
-import { ensureDurableDirectoryWin32, publishNewFileWin32 } from './win32.ts'
+import { ensureDurableDirectoryWin32, publishNewFileWin32, replaceFileWin32 } from './win32.ts'
 
 export type { JsonlCompression } from './format.ts'
 
@@ -42,6 +43,22 @@ const DEFAULT_COMPRESSION: JsonlCompression = 'zstd'
  * remains an indivisible synchronous decode.
  */
 const ZSTD_DECODE_YIELD_INTERVAL_MS = 500
+const SESSION_INDEX_VERSION = 1
+const SESSION_INDEX_FILENAME = 'session.index.json'
+
+/** Durable read index validated against the exact log revision it summarizes. */
+interface JsonlSessionIndex {
+  readonly version: typeof SESSION_INDEX_VERSION
+  readonly revision: string
+  readonly lastPromptAt: number | null
+  /** Digest of the revision and timestamp, detecting a damaged valid JSON file. */
+  readonly checksum: string
+}
+
+/** Compute the integrity digest for a Session-index payload. */
+function sessionIndexChecksum(revision: string, lastPromptAt: number | null): string {
+  return createHash('sha256').update(JSON.stringify({ revision, lastPromptAt })).digest('hex')
+}
 
 /** Assert that the independently decodable first frame contains only the header record. */
 function assertZstdHeaderFrame(plaintext: Buffer): void {
@@ -179,6 +196,10 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
 
   append(id: SessionId, events: readonly SessionEvent[]): Promise<void> {
     return this.coordinator.append(id, events)
+  }
+
+  delete(id: SessionId, signal?: AbortSignal): Promise<void> {
+    return this.coordinator.delete(id, signal)
   }
 
   override prepare(id: SessionId, signal?: AbortSignal): Promise<SessionPreparation> {
@@ -419,13 +440,19 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
   }
 
   /** Durably append a batch, lazily materializing the file when not yet present. */
-  async appendBatch(meta: SessionHeader, events: readonly SessionEvent[], isMaterialized: boolean): Promise<void> {
+  async appendBatch(
+    meta: SessionHeader,
+    events: readonly SessionEvent[],
+    isMaterialized: boolean,
+    lastPromptAt: number | null,
+  ): Promise<void> {
     await this.ensureRootEncoding()
     if (isMaterialized) {
       await this.appendLines(meta, events)
     } else {
       await this.materialize(meta, events)
     }
+    await this.refreshSessionIndex(meta, lastPromptAt)
   }
 
   /**
@@ -437,10 +464,42 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
     meta: SessionHeader,
     tornMarker: JsonlTornMarker | undefined,
     closers: readonly SessionEvent[],
+    lastPromptAt: number | null = null,
   ): Promise<void> {
     if (tornMarker !== undefined) await this.repair(meta, tornMarker.truncateTo)
     const repairedEvents = [...(tornMarker?.recoveredEvents ?? []), ...closers]
     if (repairedEvents.length > 0) await this.appendLines(meta, repairedEvents)
+    await this.refreshSessionIndex(meta, lastPromptAt)
+  }
+
+  /** Remove one log and its derived activity sidecar without touching unknown files. */
+  async deleteStored(id: SessionId, signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted()
+    await this.ensureRootEncoding()
+    signal?.throwIfAborted()
+    const path = await this.findLog(id, signal)
+    if (path === undefined) return false
+    const dir = dirname(path)
+    await rm(join(dir, SESSION_INDEX_FILENAME), { force: true })
+    signal?.throwIfAborted()
+    try {
+      await rm(path)
+    } catch (error: unknown) {
+      if (isENOENT(error)) return false
+      throw error
+    }
+    if (process.platform !== 'win32') await this.syncDirPosix(dir)
+    // The directory is backend-owned but may contain an unknown future or
+    // diagnostic artifact. Remove it only when empty; otherwise retain it.
+    try {
+      await rmdir(dir)
+      if (process.platform !== 'win32') await this.syncDirPosix(dirname(dir))
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOTEMPTY'
+        && (error as NodeJS.ErrnoException | null)?.code !== 'EEXIST'
+        && !isENOENT(error)) throw error
+    }
+    return true
   }
 
   /** List valid unique stored sessions' metadata (header line only — no full-log parse). */
@@ -448,7 +507,7 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
     return (await this.listArtifacts(signal)).map(artifact => artifact.header)
   }
 
-  /** List metadata plus a stat-derived identity for each append-only log. */
+  /** List metadata, exact prompt activity, and a stat-derived identity per log. */
   async listSnapshots(signal?: AbortSignal): Promise<SessionPersistenceSnapshot[]> {
     const snapshots: SessionPersistenceSnapshot[] = []
     for (const artifact of await this.listArtifacts(signal)) {
@@ -456,9 +515,19 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
       try {
         const identity = await stat(artifact.path, { bigint: true })
         signal?.throwIfAborted()
+        const revision = fileRevision(identity)
+        let lastPromptAt = await this.readSessionIndex(artifact.path, revision, signal)
+        let snapshotRevision = revision
+        if (lastPromptAt === undefined) {
+          const prefix = await this.readPrefix(artifact.path, artifact.header.id, signal)
+          lastPromptAt = this.foldLastPromptAt(prefix.events)
+          snapshotRevision = prefix.revision
+          await this.writeSessionIndexBestEffort(artifact.path, snapshotRevision, lastPromptAt)
+        }
         snapshots.push({
           header: artifact.header,
-          revision: fileRevision(identity),
+          lastPromptAt,
+          revision: snapshotRevision,
         })
       } catch (error: unknown) {
         signal?.throwIfAborted()
@@ -467,6 +536,85 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
     }
     signal?.throwIfAborted()
     return snapshots
+  }
+
+  /** Fold the one shared human-prompt predicate over an exact event prefix. */
+  private foldLastPromptAt(events: readonly SessionEvent[]): number | null {
+    let lastPromptAt: number | null = null
+    for (const event of events) lastPromptAt = advanceLastHumanPromptAt(lastPromptAt, event)
+    return lastPromptAt
+  }
+
+  /** Refresh the sidecar after a durable log mutation. */
+  private async refreshSessionIndex(meta: SessionHeader, lastPromptAt: number | null): Promise<void> {
+    const path = logPath(this.root, meta.cwd, meta.id, this.compression)
+    const revision = fileRevision(await stat(path, { bigint: true }))
+    await this.writeSessionIndexBestEffort(path, revision, lastPromptAt)
+  }
+
+  /** Read a valid sidecar only when it names the exact current log revision. */
+  private async readSessionIndex(
+    log: string,
+    revision: PersistenceRevision,
+    signal?: AbortSignal,
+  ): Promise<number | null | undefined> {
+    signal?.throwIfAborted()
+    let value: unknown
+    try {
+      value = JSON.parse(await readFile(join(dirname(log), SESSION_INDEX_FILENAME), { encoding: 'utf8', signal }))
+    } catch (error: unknown) {
+      signal?.throwIfAborted()
+      if (isENOENT(error) || error instanceof SyntaxError) return undefined
+      throw error
+    }
+    signal?.throwIfAborted()
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+    const record = value as Partial<JsonlSessionIndex>
+    if (record.version !== SESSION_INDEX_VERSION || record.revision !== revision) return undefined
+    const lastPromptAt = record.lastPromptAt
+    if (lastPromptAt !== null
+      && (typeof lastPromptAt !== 'number' || !Number.isSafeInteger(lastPromptAt) || lastPromptAt < 0)) return undefined
+    if (record.checksum !== sessionIndexChecksum(record.revision, lastPromptAt)) return undefined
+    return lastPromptAt
+  }
+
+  /**
+   * Persist a replaceable derived index. Failure cannot roll back an already
+   * durable append; a later list detects the missing or stale revision and
+   * reconstructs the exact value from the log.
+   */
+  private async writeSessionIndexBestEffort(
+    log: string,
+    revision: PersistenceRevision,
+    lastPromptAt: number | null,
+  ): Promise<void> {
+    try {
+      await this.writeSessionIndex(log, {
+        version: SESSION_INDEX_VERSION,
+        revision,
+        lastPromptAt,
+        checksum: sessionIndexChecksum(revision, lastPromptAt),
+      })
+    } catch (error: unknown) {
+      this.ctx.logger.warn(`session-persistence-jsonl: failed to refresh index for "${log}": ${String(error)}`)
+    }
+  }
+
+  /** Atomically replace one synced Session-index sidecar. */
+  private async writeSessionIndex(log: string, index: JsonlSessionIndex): Promise<void> {
+    const finalPath = join(dirname(log), SESSION_INDEX_FILENAME)
+    const tmp = await this.writeSyncedTempFile(finalPath, `${JSON.stringify(index)}\n`)
+    try {
+      if (process.platform === 'win32') {
+        await replaceFileWin32(tmp, finalPath)
+      } else {
+        await rename(tmp, finalPath)
+        await this.syncDirPosix(dirname(finalPath))
+      }
+    } catch (error: unknown) {
+      await rm(tmp, { force: true })
+      throw error
+    }
   }
 
   private async listArtifacts(signal?: AbortSignal): Promise<Array<{ header: SessionHeader; path: string }>> {

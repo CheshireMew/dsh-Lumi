@@ -111,7 +111,10 @@ async function harness(
   await ctx.plugin(SessionStore)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(UserQuestionService)
-  ctx.provide('sessionPersistence', (persistence ?? { list: () => Promise.resolve([]) }) as never)
+  ctx.provide('sessionPersistence', (persistence ?? {
+    list: () => Promise.resolve([]),
+    listSnapshots: () => Promise.resolve([]),
+  }) as never)
   if (presets !== undefined) ctx.provide('agentPresets', roster(presets, options.userIds) as never)
 
   const factory: AgentFactory = {
@@ -694,6 +697,7 @@ describe('session.history presenter scope', () => {
     const meta = { id: SessionId('p4'), createdAt: 1, cwd: '/tmp/p4', agentPreset: 'standard' }
     const { api } = await harness(['standard', 'minimal'], {
       list: () => Promise.resolve([meta]),
+      listSnapshots: () => Promise.resolve([{ header: meta, lastPromptAt: null, revision: 'test' }]),
       inspect: () => Promise.resolve({
         meta,
         events: [{ type: 'agent-preset/selected', seq: 1, time: 0, data: { agentPreset: 'minimal' } }],
@@ -712,6 +716,7 @@ describe('session.history presenter scope', () => {
     const meta = { id: SessionId('p3'), createdAt: 1, cwd: '/tmp/p3', agentPreset: 'standard' }
     const { api } = await harness(['standard'], {
       list: () => Promise.resolve([meta]),
+      listSnapshots: () => Promise.resolve([{ header: meta, lastPromptAt: null, revision: 'test' }]),
       inspect: () => Promise.resolve({ meta, events: [] }),
     })
     // The preset broke after the session ran: the roster rejects the mount.

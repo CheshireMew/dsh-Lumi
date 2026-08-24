@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ApiProxy, HostFrame, MuxFrame } from '../src/api/index.ts'
-import type { ClientResponse, RpcMessage, RpcReceipt, RpcRequest } from '../src/api/rpc.ts'
-import { RpcId } from '../src/api/rpc.ts'
-import { toFetchHandler } from '../src/fetch/handler.ts'
-import { AbstractApiClient, InProcessApiClient } from '../src/fetch/client.ts'
+import type { ApiProxy, HostFrame, MuxFrame } from '@deepseek-ai/dsh-api-protocol/api'
+import type { ClientResponse, RpcMessage, RpcReceipt, RpcRequest } from '@deepseek-ai/dsh-api-protocol/api/rpc'
+import { RpcId } from '@deepseek-ai/dsh-api-protocol/api/rpc'
+import { AbstractApiClient, InProcessApiClient } from '@deepseek-ai/dsh-api-protocol/client'
+import { toFetchHandler } from '@deepseek-ai/dsh-api-protocol/handler'
 
 /** Minimal in-memory ApiProxy: echoes rpcIds, scripts one frame per stream. */
 function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFrame[]; crashOn: string }> = {}): ApiProxy {
@@ -20,6 +20,9 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
       async list(request) {
         if (overrides.crashOn === 'session.list') throw new Error('impl crashed')
         return { rpcId: request.rpcId, result: { ok: true, value: { items: [] } } }
+      },
+      async delete(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: { deletedSessionIds: [request.payload.sessionId] } } }
       },
       async search(request, signal) {
         if (request.payload.query === 'hang') {
@@ -190,6 +193,9 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
       },
       async archiveSession(request) {
         return { rpcId: request.rpcId, result: { ok: true, value: { archivedSessionIds: [request.payload.sessionId] } } }
+      },
+      async unarchiveSession(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: { archivedSessionIds: [] } } }
       },
     },
     agentPresets: {

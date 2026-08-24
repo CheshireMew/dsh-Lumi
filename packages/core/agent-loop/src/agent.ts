@@ -110,6 +110,14 @@ export class ReactLoopAgent implements Agent {
     }
   }
 
+  /** Commit a running driver's idle state before its async result becomes observable. */
+  private retireRunning(phase: Extract<Phase, { kind: 'running' }>): void {
+    if (this.phase !== phase) return
+    const { turn, wakeRequested } = phase
+    this.setPhase({ kind: 'idle', lastTurn: turn })
+    if (wakeRequested && this.inbox.hasPending) this.wakeDriver()
+  }
+
   send(message: UserMessage, target: InboxTarget, wakeup: boolean): void {
     // Waking input cannot join an aborted activity, so it starts the next turn.
     // Captured before the insertion so a reentrant cancel from a splice observer cannot reclassify it.
@@ -208,17 +216,15 @@ export class ReactLoopAgent implements Agent {
   }
 
   private async kick(): Promise<void> {
+    /* v8 ignore next -- wakeDriver reserves a running phase before starting its driver */
+    if (this.phase.kind !== 'running') throw new Error(`agent "${this.id}": kick without driver reservation`)
+    const phase = this.phase
     try {
       while (await this.turn()) {}
     } catch (_error) {
       // Reported failures and cancellation are contained at the driver boundary.
     } finally {
-      /* v8 ignore next -- kick owns a running phase until this driver boundary */
-      if (this.phase.kind === 'running') {
-        const { turn, wakeRequested } = this.phase
-        this.setPhase({ kind: 'idle', lastTurn: turn })
-        if (wakeRequested && this.inbox.hasPending) this.wakeDriver()
-      }
+      this.retireRunning(phase)
     }
   }
 
@@ -258,6 +264,7 @@ export class ReactLoopAgent implements Agent {
     }
     phase.turn = turn
     let turnEnds: TurnEndReason | null = null
+    let retire = false
     let target: InboxTarget = 'next-turn'
     try {
       while (true) {
@@ -266,6 +273,7 @@ export class ReactLoopAgent implements Agent {
         const decision = await this.preStep(target, { turn, step })
         if (decision.kind === 'reject') {
           turnEnds = { kind: 'blocked' }
+          retire = true
           return false
         }
         if (turnEnds && decision.messages.length === 0) break
@@ -273,6 +281,7 @@ export class ReactLoopAgent implements Agent {
         // still owns the initial turn boundary, but it spends no model call.
         if (phase.step === 0 && decision.messages.length === 0) {
           turnEnds = { kind: 'completed' }
+          retire = true
           return false
         }
         signal.throwIfAborted()
@@ -300,6 +309,7 @@ export class ReactLoopAgent implements Agent {
         target = 'next-step'
       }
     } catch (error: unknown) {
+      retire = true
       if (signal.aborted) {
         turnEnds = { kind: 'aborted', reason: signal.reason as AgentCancelCause }
         throw error
@@ -319,9 +329,14 @@ export class ReactLoopAgent implements Agent {
         this.session.append('turn/end', { turn, reason: turnEnds! })
       } catch (error: unknown) {
         this.throwError(error)
+      } finally {
+        if (retire) this.retireRunning(phase)
       }
     }
-    if (!this.inbox.hasPending) return false
+    if (!this.inbox.hasPending) {
+      this.retireRunning(phase)
+      return false
+    }
     phase.abort = new AbortController()
     // A fresh controller makes a latch set on the old one stale: the live driver claims the queue itself.
     phase.wakeRequested = false

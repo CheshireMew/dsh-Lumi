@@ -211,8 +211,8 @@ Plugin disposal 会先关闭变更接纳，排空已进入各 Session 队列的�
 
 ## 边界与限制
 
-- 变更队列仅在进程内生效。storage-domain 没有跨进程条件写，因此多个 Host 写入同一存储根目录时，不提供 compare-and-swap 或防止丢失更新的保证。
-- Session persistence 没有持久删除接口。服务不把 `session/disposed` 或 `host/session-removed` 当作删除，因此不伪造级联；在带外移除日志后，孤儿伴随记录可能继续存在。
+- 变更队列仅在进程内生效。storage-domain 没有跨进程条件写；产品启动器会阻止另一个 Host 共用同一规范化 `$DSH_HOME`，直接多进程嵌入则必须保证单一写入者或自行实现条件写协议。
+- 已提交的 `SessionPersistence.delete()` 会发出 `session-persistence/deleted`，并在持久删除后串行清理反馈。启动时会移除同时不存在持久 Session 和 live Session 的记录，因此带外删除日志会在重启时收敛，而不是立即收敛。
 - 请求若恰好落在 live detach 之后、persistence catalog 物化 header 之前的极短窗口，可能收到 `session-not-found`；调用方应在 retirement materialization 后重试。
 - 由于 persistence 没有按 id 读取元数据的操作，cold 请求会扫描完整的 Session snapshot 目录。单个 Session 行也没有条目数或聚合字节上限；在具体消费方拥有行策略之前，`maxNoteBytes` 只限制每条备注。
 - 只有 `{createdAt, cwd}` 不同时，header 身份才能识别复用的 id；本约定无法区分保留相同 header 身份的克隆日志。

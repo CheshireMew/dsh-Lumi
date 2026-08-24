@@ -14,7 +14,7 @@ Status: implemented
 
 **wire 领域挂上编译期 RPC 映射，拒绝落为错误码，owner 事件原样转发。**`settings.describe/openDocument/update/replace/mutate`、`credentials.describe/set/unset`、`llm.providers` 与 `llm.models` 一同加入 `RpcMethodMap`，由编译器锁定的接线位点让 schema、处理器与客户端保持步调一致。seam 侧拒绝折叠为业务错误，客户端则订阅转发的 settings、credentials 与 LLM owner 事件，无需轮询即可收敛（见[转发的 Remote 事件](2026-08-10-remote-event-delivery.md)）。settings 读取、原生操作与写入和 `pickDirectory`/`openPath` 一起进入连接守卫的特权集合：回环 + 同源，否则 403，因为暴露在局域网上的 dsh web 绝不能接受来自其他源的配置访问。
 
-**`describe()` 增加分层与结构化 secret 脱敏。**`SettingsDescriptor` 在生效值之外携带 `base`/`user`，表单据此按「字段是否出现在用户层」来标记「已覆盖」，而非按值是否不等（与 base *相等*的覆盖仍然是覆盖）。`describe({ redactSecrets: true })`——在每个 wire 面都强制启用——经由对 schema 的纯结构遍历（object/dict/array 容器；secret 角色子树整体是一个不透明叶节点）从全部三层剥除 `role('secret')` 子树，并把剥除的槽位枚举为 `{path, set}`，页面因此不必收到任何值就能渲染只写输入框。
+**descriptor 分离同进程视图与协议视图。**`SettingsDescriptor` 在生效值之外携带 `base`／`user`，表单据此按「字段是否出现在 user 层」标记「已覆盖」，而非比较值是否相等（与 base *相等*的覆盖仍然是覆盖）。`describe()` 原样返回数据，仅限同进程使用。每个协议接口都使用 `describeForWire()`；它从三层值中移除 `role('secret')` 子树，把 transform 与未知 schema 节点整体设为不透明内容，清理序列化默认值，并枚举 `{path, set}` slot，使页面能在不接收值的前提下渲染只写输入框。
 
 **Host 识别并打开本地设置文档。** settings seam 暴露可选的 `documentPath` 提供方元数据和 `prepareDocument()` 操作；`settings-file` 返回已完全解析的自定义文件名或 `$DSH_HOME/settings.yaml` 文件名，并在文档缺失时以仅属主可访问的权限独占创建空文档，非文件提供方则保留基类的 `undefined`。仅限回环访问的 `settings.describe` 响应会在脱敏 namespace 视图旁只携带布尔型 `hasDocument` 能力。`ui-settings-general` 只在回环页面注册一条 `settings.action` 条目，只有元数据确认可准备好一份由提供方持有的本地文档后才显示，并调用无路径参数的 `settings.openDocument`；Host 会在文本文档交接前再次解析提供方路径（macOS 上使用 `open -t`，使任意 YAML 文件关联无法重定向这次操作；桌面 Linux 上使用 `xdg-open`；Windows 上使用 `Invoke-Item`；WSL 上先执行 `wslpath -w`，再使用同一 Windows 交接）。通用 Workspace 路径仍保留默认意图，包括针对浏览器可渲染文档的浏览器偏好。浏览器既不推导 `$DSH_HOME`，也不会收到文件系统目标；远程页面不会为这项操作发起特权 settings 读取。
 

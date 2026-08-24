@@ -31,12 +31,17 @@ export interface DomainTableSpec<K extends string = string, V = unknown> {
   readonly __key?: K
 }
 
-/** Static declaration of one domain: identity, version, and record layout. */
+/** Open-time handling for a damaged durable medium. */
+export type DomainRecovery = 'reject' | 'reset'
+
+/** Static declaration of one domain: identity, version, record layout, and recovery policy. */
 export interface DomainSpec {
   /** Domain name; must match `UNIT_NAME_RE` (doubles as the backend unit name). */
   readonly name: string
   /** Domain format version; a medium stamped with a different version rejects at open. */
   readonly version: number
+  /** Damage handling. `reject` is the default; `reset` is only for fully derived data. */
+  readonly recovery?: DomainRecovery
   /** Optional global singleton slot. */
   readonly global?: DomainGlobalSpec<unknown>
   /** Table declarations keyed by table name; each name must match `UNIT_NAME_RE`. */
@@ -82,6 +87,10 @@ export function defineDomain<S extends DomainSpec>(spec: S): S {
   }
   if (!Number.isInteger(spec.version) || spec.version < 0) {
     throw new Error(`domain '${spec.name}' version must be a non-negative integer, got ${spec.version}`)
+  }
+  const recovery: unknown = spec.recovery
+  if (recovery !== undefined && recovery !== 'reject' && recovery !== 'reset') {
+    throw new Error(`domain '${spec.name}' recovery must be 'reject' or 'reset', got ${JSON.stringify(recovery)}`)
   }
   for (const table of Object.keys(spec.tables)) {
     if (!UNIT_NAME_RE.test(table)) {

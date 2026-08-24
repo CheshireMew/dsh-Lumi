@@ -11,6 +11,8 @@ import {
 
 /** Group key for Sessions outside every Workspace. */
 export const UNGROUPED_KEY = ''
+/** Synthetic group containing sessions hidden by the durable archive set. */
+export const ARCHIVED_KEY = '__archived__'
 
 /** Display label for the ungrouped bucket row. */
 export const UNGROUPED_LABEL = 'Ungrouped'
@@ -111,9 +113,9 @@ function byRecency(a: SessionSummary, b: SessionSummary): number {
 
 /**
  * Ordinary sessions are visible; among blank sessions, only the current one
- * is visible. Subagent children use their parent header catalog; archived
- * sessions are visible nowhere, while their accounting slots remain so
- * unarchiving restores position.
+ * is visible. Subagent children use their parent header catalog. Archived
+ * sessions leave ordinary groups but retain their accounting slots so
+ * unarchiving restores position; dedicated archive projections render them.
  */
 function sessionVisible(session: SessionSummary, current: SessionId | undefined, archived: ReadonlySet<SessionId>): boolean {
   return session.origin !== 'subagent'
@@ -232,8 +234,8 @@ function sessionNode(
  *
  * Every group shows; sessions populate under expanded groups in the selected
  * local order. Blank sessions are excluded except for the selected
- * provisional New Session row; archived sessions are excluded everywhere.
- * Content search lives outside this derivation
+ * provisional New Session row. Archived sessions are excluded from their
+ * ordinary groups and collected in the synthetic Archived group. Content search lives outside this derivation
  * (see {@link deriveSearchResults}).
  * @param list - sessions list snapshot (`current` feeds containsCurrent).
  * @param workspaces - real workspaces in stable Host order.
@@ -269,7 +271,42 @@ export function deriveGroups(
       sessions: expanded ? g.sessions.map(session => sessionNode(session, descendants)) : [],
     })
   }
+  const archivedSessions = archivedSessionIds.flatMap((id) => {
+    const summary = list.byId[id]
+    return summary === undefined ? [] : [summary]
+  }).sort(byRecency)
+  if (archivedSessions.length > 0) {
+    const expanded = expandedGroups.has(ARCHIVED_KEY)
+    groups.push({
+      key: ARCHIVED_KEY,
+      workspaceId: undefined,
+      cwd: undefined,
+      createdAt: undefined,
+      label: 'Archived',
+      sessionCount: archivedSessions.length,
+      expanded,
+      containsCurrent: false,
+      sessions: expanded ? archivedSessions.map(session => sessionNode(session, descendants)) : [],
+    })
+  }
   return groups
+}
+
+/**
+ * Derive archived rows for the hierarchy-free list's trailing section.
+ * @param list - sessions list snapshot.
+ * @param archivedSessionIds - registry-global archive set in display order.
+ * @returns archived rows in descending activity order.
+ */
+export function deriveArchived(
+  list: SessionListState,
+  archivedSessionIds: readonly SessionId[],
+): SessionNode[] {
+  const descendants = indexSubagentDescendants(list.byId)
+  return archivedSessionIds.flatMap((id) => {
+    const summary = list.byId[id]
+    return summary === undefined ? [] : [sessionNode(summary, descendants)]
+  }).sort((left, right) => right.updatedAt - left.updatedAt || String(left.id).localeCompare(String(right.id)))
 }
 
 /**

@@ -14,7 +14,8 @@ import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionLineageNode } from '@deepseek-ai/dsh-session-query'
 import type { SessionRawArtifact } from '@deepseek-ai/dsh-session-persistence'
-import ApiProxyService, { createApiProxy, toFetchHandler } from '@deepseek-ai/dsh-host-apiproxy'
+import { toFetchHandler } from '@deepseek-ai/dsh-api-protocol/handler'
+import ApiProxyService, { createApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 
 const sid = (id: string): SessionId => id as SessionId
 
@@ -125,16 +126,28 @@ async function responseBytes(response: Response): Promise<Uint8Array> {
   return new Uint8Array(await response.arrayBuffer())
 }
 
+const DEFAULT_API_PROXY_CONFIG = {
+  sessionExportCompressionLevel: 6,
+  coldBlankProbeMaxBytes: 1024,
+  sessionSearchProviderCallLimit: 100,
+  coldSummaryBatchSize: 16,
+  sessionListSnapshotTtlMs: 60_000,
+  sessionListMaxSnapshots: 8,
+}
+
 describe('session export compression config', () => {
   it('defaults to level 6 and rejects values outside the integer 0-9 range', () => {
-    expect(ApiProxyService.Config({})).toEqual({
-      sessionExportCompressionLevel: 6,
-      coldBlankProbeMaxBytes: 1024,
-    })
+    expect(ApiProxyService.Config({})).toEqual(DEFAULT_API_PROXY_CONFIG)
     expect(ApiProxyService.Config({ sessionExportCompressionLevel: 0 }))
-      .toEqual({ sessionExportCompressionLevel: 0, coldBlankProbeMaxBytes: 1024 })
+      .toEqual({
+        ...DEFAULT_API_PROXY_CONFIG,
+        sessionExportCompressionLevel: 0,
+      })
     expect(ApiProxyService.Config({ sessionExportCompressionLevel: 9 }))
-      .toEqual({ sessionExportCompressionLevel: 9, coldBlankProbeMaxBytes: 1024 })
+      .toEqual({
+        ...DEFAULT_API_PROXY_CONFIG,
+        sessionExportCompressionLevel: 9,
+      })
     for (const value of [-1, 10, 1.5]) {
       expect(() => ApiProxyService.Config({ sessionExportCompressionLevel: value } as never)).toThrow()
     }
@@ -144,12 +157,35 @@ describe('session export compression config', () => {
 describe('cold blank probe config', () => {
   it('accepts a per-Session byte bound including zero and rejects invalid bounds', () => {
     expect(ApiProxyService.Config({ coldBlankProbeMaxBytes: 0 }))
-      .toEqual({ sessionExportCompressionLevel: 6, coldBlankProbeMaxBytes: 0 })
+      .toEqual({
+        ...DEFAULT_API_PROXY_CONFIG,
+        coldBlankProbeMaxBytes: 0,
+      })
     expect(ApiProxyService.Config({ coldBlankProbeMaxBytes: 2048 }))
-      .toEqual({ sessionExportCompressionLevel: 6, coldBlankProbeMaxBytes: 2048 })
+      .toEqual({
+        ...DEFAULT_API_PROXY_CONFIG,
+        coldBlankProbeMaxBytes: 2048,
+      })
     for (const value of [-1, 1.5]) {
       expect(() => ApiProxyService.Config({ coldBlankProbeMaxBytes: value })).toThrow()
     }
+  })
+})
+
+describe('session list snapshot config', () => {
+  it('accepts positive integer lifetime and count bounds', () => {
+    expect(ApiProxyService.Config({ sessionListSnapshotTtlMs: 1, sessionListMaxSnapshots: 1 }))
+      .toEqual({
+        ...DEFAULT_API_PROXY_CONFIG,
+        sessionListSnapshotTtlMs: 1,
+        sessionListMaxSnapshots: 1,
+      })
+    for (const config of [
+      { sessionListSnapshotTtlMs: 0 },
+      { sessionListSnapshotTtlMs: 1.5 },
+      { sessionListMaxSnapshots: 0 },
+      { sessionListMaxSnapshots: 1.5 },
+    ]) expect(() => ApiProxyService.Config(config)).toThrow()
   })
 })
 

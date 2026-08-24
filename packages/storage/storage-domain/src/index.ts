@@ -9,7 +9,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
+import { StorageError, storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
+import type { KvFacet } from '@deepseek-ai/dsh-storage'
 import { DomainError } from './error.ts'
 import { descriptorOf } from './spec.ts'
 import type { DomainSpec } from './spec.ts'
@@ -20,7 +21,7 @@ export { DomainError } from './error.ts'
 export type { DomainErrorCode, DomainErrorOptions, InvalidRecordDetail } from './error.ts'
 export { defineDomain, domainTable, descriptorOf } from './spec.ts'
 export type {
-  DomainSpec, DomainGlobalSpec, DomainTableSpec,
+  DomainSpec, DomainGlobalSpec, DomainTableSpec, DomainRecovery,
   TableKeyOf, TableValueOf, GlobalValueOf,
 } from './spec.ts'
 export type { DomainChanged } from './events.ts'
@@ -86,9 +87,12 @@ export class DomainFacility {
    * name that is already open (`already-open`); resolve the backend route
    * (`backend-not-found` passes through from the hub); require its `kv` facet
    * (`facet-unsupported`); open the unit projected from the spec (backend
-   * `version-mismatch`/`malformed-medium` pass through); load and validate
-   * every stored record against the spec's zod schemas (`invalid-record`
-   * with the offending table and key); construct the domain.
+   * `version-mismatch`/`malformed-medium` pass through by default); load and
+   * validate every stored record against the spec's zod schemas
+   * (`invalid-record` with the offending table and key); construct the
+   * domain. A spec declaring `recovery: 'reset'` discards and reopens its
+   * unit once for those three damage failures only. Routing, capability,
+   * lifecycle, and I/O failures always propagate.
    *
    * Lifecycle: the CALLER owns the returned handle and closes it via
    * `Domain.close()` (typically as its own `ctx.effect` disposer) — the
@@ -111,46 +115,55 @@ export class DomainFacility {
           `backend '${backendName}' routed for domain '${spec.name}' has no kv facet`,
         )
       }
-      const unit = await backend.kv.open(descriptorOf(spec))
+      const descriptor = descriptorOf(spec)
       try {
-        const snapshot = await unit.loadAll()
-        const tables = new Map<string, Map<string, unknown>>()
-        for (const [table, tableSpec] of Object.entries(spec.tables)) {
-          const records = new Map<string, unknown>()
-          for (const [key, raw] of Object.entries(snapshot.tables[table] ?? {})) {
-            records.set(key, parseRecord(spec.name, table, key, () => tableSpec.valueSchema.parse(raw)))
-          }
-          tables.set(table, records)
-        }
-        // A null stored global means "never written": serve `initial` without
-        // materializing it — the first `set` writes.
-        const globalSpec = spec.global
-        const globalValue = globalSpec === undefined
-          ? undefined
-          : snapshot.global === null
-            ? globalSpec.initial
-            : parseRecord(spec.name, '', '', () => globalSpec.schema.parse(snapshot.global))
-        // The onClosed hook runs strictly after teardown completes: writes
-        // landing during the drain still emit domain/changed, and the domain
-        // stays resolvable (the package invariant cross-checks each event)
-        // until fully closed — only then does the name free up for reopening.
-        const domain: DomainImpl = new DomainImpl(this.ctx, spec, unit, tables, globalValue, () => {
-          this.domains.delete(spec.name)
-          this.reserved.delete(spec.name)
-        })
-        this.domains.set(spec.name, domain)
-        // The single type-erasure point: DomainImpl is the untyped runtime,
-        // Domain<S> the spec-typed view; the unknown hop is required because
-        // S's conditional global-handle type stays unresolved here.
-        return domain as unknown as Domain<S>
+        return await this.openUnit(spec, backend.kv)
       } catch (error) {
-        await unit.close()
-        throw error
+        if (spec.recovery !== 'reset' || !isDamageFailure(error)) throw error
+        await backend.kv.destroy(descriptor)
+        this.ctx.logger.warn(
+          `domain '${spec.name}' discarded its damaged '${backendName}' kv unit after ${damageCode(error)}`,
+        )
+        return await this.openUnit(spec, backend.kv)
       }
     } catch (error) {
       // Any failure means the domain never registered (nothing can throw
       // after it), so releasing the name reservation is unconditional.
       this.reserved.delete(spec.name)
+      throw error
+    }
+  }
+
+  /** Open, validate, and register one domain in a single attempt. */
+  private async openUnit<S extends DomainSpec>(
+    spec: S,
+    kv: KvFacet,
+  ): Promise<Domain<S>> {
+    const unit = await kv.open(descriptorOf(spec))
+    try {
+      const snapshot = await unit.loadAll()
+      const tables = new Map<string, Map<string, unknown>>()
+      for (const [table, tableSpec] of Object.entries(spec.tables)) {
+        const records = new Map<string, unknown>()
+        for (const [key, raw] of Object.entries(snapshot.tables[table] ?? {})) {
+          records.set(key, parseRecord(spec.name, table, key, () => tableSpec.valueSchema.parse(raw)))
+        }
+        tables.set(table, records)
+      }
+      const globalSpec = spec.global
+      const globalValue = globalSpec === undefined
+        ? undefined
+        : snapshot.global === null
+          ? globalSpec.initial
+          : parseRecord(spec.name, '', '', () => globalSpec.schema.parse(snapshot.global))
+      const domain: DomainImpl = new DomainImpl(this.ctx, spec, unit, tables, globalValue, () => {
+        this.domains.delete(spec.name)
+        this.reserved.delete(spec.name)
+      })
+      this.domains.set(spec.name, domain)
+      return domain as unknown as Domain<S>
+    } catch (error) {
+      await unit.close()
       throw error
     }
   }
@@ -175,6 +188,17 @@ export class DomainFacility {
   async closeAll(): Promise<void> {
     await Promise.all([...this.domains.values()].map(domain => domain.close()))
   }
+}
+
+/** Whether an open failure proves that the unit's durable contents are damaged or incompatible. */
+function isDamageFailure(error: unknown): error is StorageError | DomainError {
+  return (error instanceof StorageError && (error.code === 'version-mismatch' || error.code === 'malformed-medium'))
+    || (error instanceof DomainError && error.code === 'invalid-record')
+}
+
+/** Stable diagnostic code for a failure already narrowed by {@link isDamageFailure}. */
+function damageCode(error: StorageError | DomainError): string {
+  return error.code
 }
 
 /** Run one zod parse, translating failure to `invalid-record` with its location. */

@@ -23,8 +23,8 @@ import {
   type PersistenceBackend,
   type StoredPrefix,
 } from '@deepseek-ai/dsh-session-persistence'
-import type { RpcRequest } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
-import { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
+import type { RpcRequest } from '@deepseek-ai/dsh-api-protocol/api/rpc'
+import { RpcId } from '@deepseek-ai/dsh-api-protocol/api/rpc'
 import { createApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 
 const sid = (id: string): SessionId => id as SessionId
@@ -36,6 +36,18 @@ function request<P>(payload: P): RpcRequest<P> {
 
 function header(id: string, createdAt: number, extra: Partial<SessionHeader> = {}): SessionHeader {
   return { version: 0, id: sid(id), createdAt, cwd: '/proj', ...extra }
+}
+
+/** Build exact persistence-index rows for structural gateway fixtures. */
+function snapshots(
+  headers: readonly SessionHeader[],
+  lastPromptAt: (header: SessionHeader) => number | null = () => null,
+): Array<{ header: SessionHeader; lastPromptAt: number | null; revision: ReturnType<typeof SessionPersistenceRevision> }> {
+  return headers.map(meta => ({
+    header: meta,
+    lastPromptAt: lastPromptAt(meta),
+    revision: SessionPersistenceRevision(`cold-test:${meta.id}`),
+  }))
 }
 
 describe('sessions.list cold merge', () => {
@@ -82,6 +94,11 @@ describe('sessions.list cold merge', () => {
     })
     ctx.provide('sessionPersistence', {
       list: () => Promise.resolve(metas),
+      listSnapshots: () => Promise.resolve(snapshots(metas, (meta) => {
+        if (meta.id === sid('small-conversation')) return 1200
+        if (meta.id === sid('cached-nonblank')) return 1000
+        return null
+      })),
       locate: (meta: SessionHeader) => {
         if (meta.id === sid('large-unknown')) return { kind: 'jsonl', path: largePath }
         if (meta.id === sid('locationless')) return undefined
@@ -140,6 +157,7 @@ describe('sessions.list cold merge', () => {
     const readFrom = vi.fn()
     ctx.provide('sessionPersistence', {
       list: () => Promise.resolve([meta]),
+      listSnapshots: () => Promise.resolve(snapshots([meta])),
       locate: () => ({ kind: 'jsonl', path: '/not-read' }),
       readFrom,
     } as never)
@@ -170,6 +188,7 @@ describe('sessions.list cold merge', () => {
     const release = Promise.withResolvers<undefined>()
     ctx.provide('sessionPersistence', {
       list: () => Promise.resolve([meta]),
+      listSnapshots: () => Promise.resolve(snapshots([meta])),
       locate: () => ({ kind: 'jsonl', path }),
       readFrom: async () => {
         started.resolve(undefined)
@@ -284,6 +303,7 @@ describe('cold history recovery view', () => {
       ),
       appendBatch: () => Promise.resolve(),
       commitRepair: () => Promise.resolve(),
+      deleteStored: () => Promise.resolve(false),
       list: () => Promise.resolve([structuredClone(meta)]),
     }
     const coordinator = new PersistenceCoordinator(ctx, backend)

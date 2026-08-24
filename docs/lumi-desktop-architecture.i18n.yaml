@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/lumi-desktop-architecture.md
-lumi-desktop-architecture.md: fea7a1e2bf19653bab3782b45048084344073b8e
-lumi-desktop-architecture.zh.md: 7af09688d111fd522742bb1f8a1194b79647547f
+lumi-desktop-architecture.md: d857c5420b609518b0c2d55b4c4b53799478bb62
+lumi-desktop-architecture.zh.md: fff628f3d71bf7866b71396264f2baff14fe0159

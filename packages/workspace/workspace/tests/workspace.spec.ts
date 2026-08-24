@@ -124,6 +124,7 @@ function selectiveFailureBackend(
           close: () => unit.close(),
         }
       },
+      destroy: descriptor => inner.kv.destroy(descriptor),
     },
     close: () => inner.close(),
   }
@@ -256,7 +257,9 @@ describe('WorkspaceRegistry lifecycle and bootstrap', () => {
     await first.fiber.dispose()
 
     const second = await harness({ pool, sessions: [header('late', late, 100)] })
-    expect(second.list).not.toHaveBeenCalled()
+    // Startup always refreshes the persisted-header authority so interrupted
+    // Session deletion cleanup does not leave stale workspace membership.
+    expect(second.list).toHaveBeenCalledTimes(1)
     expect(second.registry.list()).toEqual([])
     expect(storedState(pool)).toEqual({ initialized: true, workspaceIds: [], archivedSessionIds: [] })
   })
@@ -748,7 +751,9 @@ describe('header-validated membership projection', () => {
     expect(workspace.sessionIds).toEqual(['good'])
     expect(result.registry.list()[0]!.sessionIds).toEqual(['good'])
     expect(result.list).toHaveBeenCalledTimes(1)
-    expect(storedRecord(pool, id).sessionIds).toEqual(['good', 'mismatch', 'missing'])
+    // Startup removes identities that no longer exist in Session persistence;
+    // cwd mismatches remain candidates until the next workspace mutation.
+    expect(storedRecord(pool, id).sessionIds).toEqual(['good', 'mismatch'])
 
     await workspace.setTitle('pruned')
     expect(storedRecord(pool, id).sessionIds).toEqual(['good'])
@@ -893,6 +898,29 @@ describe('registry-global session archive', () => {
 
     await result.registry.archiveSession(SessionId('kept'))
     expect(result.registry.archivedSessionIds).toEqual(['gone', 'kept'])
+
+    await result.registry.unarchiveSession(SessionId('gone'))
+    expect(result.registry.archivedSessionIds).toEqual(['kept'])
+    expect(storedState(result.pool).archivedSessionIds).toEqual(['kept'])
+    const changesAfterRestore = result.changes.filter(change => change.table === '').length
+    await result.registry.unarchiveSession(SessionId('gone'))
+    expect(result.changes.filter(change => change.table === '').length).toBe(changesAfterRestore)
+  })
+
+  it('removes a deleted session from workspace accounting and the archive set', async () => {
+    const dir = await makeDir('delete-cleanup')
+    const result = await harness({ sessions: [header('deleted', dir, 100)] })
+    const workspace = result.registry.list()[0]!
+    await result.registry.archiveSession(SessionId('deleted'))
+    expect(workspace.sessionIds).toEqual(['deleted'])
+
+    result.setSessions([])
+    result.ctx.emit('session-persistence/deleted', SessionId('deleted'))
+    await vi.waitFor(() => {
+      expect(workspace.sessionIds).toEqual([])
+      expect(result.registry.archivedSessionIds).toEqual([])
+    })
+    expect(storedRecord(result.pool, workspace.id).sessionIds).toEqual([])
   })
 
   it('accepts unaccounted and live sessions but rejects unknown ids without writing', async () => {

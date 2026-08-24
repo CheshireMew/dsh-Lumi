@@ -20,13 +20,14 @@ describe('upstream synchronization planning', () => {
   })
 
   it('renders one trailing newline and preserves check outcomes', () => {
-    const report = renderSyncReport('2026-08-15', 'codex/sync-20260814-47f94385', commit, commit, [], [], [
+    const report = renderSyncReport('2026-08-15', 'codex/sync-20260814-47f94385', commit, commit, [], [], ['api-protocol'], [
       { name: 'passing check', command: 'pnpm run pass', passed: true },
       { name: 'failing check', command: 'pnpm run fail', passed: false },
     ])
 
     expect(report).toContain('- PASS — `pnpm run pass` (passing check)')
     expect(report).toContain('- FAIL — `pnpm run fail` (failing check)')
+    expect(report).toContain('`api-protocol` — review and record retain, reapply, refactor, or retire')
     expect(report.endsWith('\n')).toBe(true)
     expect(report.endsWith('\n\n')).toBe(false)
   })

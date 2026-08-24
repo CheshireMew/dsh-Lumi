@@ -7,6 +7,7 @@
  */
 
 import { WebError } from '@deepseek-ai/dsh-web'
+import { PRODUCT_TOKEN } from '@deepseek-ai/dsh-product-identity'
 import type {
   WebSearchProvider,
   WebSearchRequest,
@@ -30,8 +31,8 @@ export const PERPLEXITY_DEFAULT_MAX_TOKENS = 1024
 /** Recency filter values Perplexity accepts for `search_recency_filter`. */
 export type PerplexityRecency = 'day' | 'week' | 'month' | 'year'
 
-/** Attribution header sent on every request. Bump with the package version. */
-const USER_AGENT = 'deepseek-harness/0.0.1'
+/** Attribution header sent on every request. */
+const USER_AGENT = PRODUCT_TOKEN
 
 /** Resolved provider options (the plugin's `apply` supplies env-var and constant defaults). */
 export interface PerplexitySearchProviderOptions {

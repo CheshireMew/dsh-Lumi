@@ -116,8 +116,7 @@
 }
 
 .colorTools {
-  /* The design platform ships no purple static token; violet-400 literal. */
-  --meter-tint: rgb(167, 139, 250);
+  --meter-tint: var(--dsw-static-violet-400);
 }
 
 .colorMessages {

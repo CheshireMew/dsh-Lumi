@@ -19,7 +19,9 @@ const BUILTIN_ASSETS_ROOT = fileURLToPath(new URL('../assets', import.meta.url))
 /** Register optional Host capabilities without forcing non-Web surfaces to provide them. */
 export function apply(ctx: Context): void {
   ctx.inject(['settings'], (settingsCtx) => {
-    settingsCtx.settings.register(SETTINGS_NAMESPACE, LumiCharacterSettingsSchema)
+    settingsCtx.settings.register(SETTINGS_NAMESPACE, LumiCharacterSettingsSchema, {
+      surfaces: ['configuration-client'],
+    })
   })
   ctx.inject(['webServer'], (webCtx) => {
     const catalog = new LumiPackCatalog(

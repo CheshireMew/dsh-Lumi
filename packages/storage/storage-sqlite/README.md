@@ -10,6 +10,8 @@ Document-per-row: each unit table becomes a physical `"u_<unit>_<table>" (key TE
 
 Every write primitive is a single prepared statement — SQLite's per-statement atomicity satisfies the KV contract without explicit transactions, and write ordering stays the caller's responsibility (the domain layer's write chain). Missing directories and database files are created owner-only (`0o700`/`0o600`), matching the session-persistence SQLite backend.
 
+The `destroy` primitive transactionally drops the closed unit's declared record tables and removes its global and version rows. An absent unit is a no-op; an open, opening, or already-destroying unit rejects. The shared database and every other unit remain untouched.
+
 ## Configuration (schemastery)
 
 ```ts
@@ -38,6 +40,6 @@ None — the backend never touches live request prefixes.
 ## Known Limitations and Deferred Work
 
 - **`DatabaseSync` is synchronous** — each write blocks the event loop for its (single-statement) duration; acceptable at domain-data scale.
-- **No busy-wait or retry policy** — another connection holding a write transaction rejects the operation immediately; there is no multi-process write protection.
+- **No busy-wait or retry policy** — another connection holding a write transaction rejects the operation immediately. The backend does not coordinate multiple direct embedders; the shipped `dsh` profile launcher instead prevents a second Host from using the same canonical `$DSH_HOME`.
 - **Only the current `STORAGE_SQLITE_SCHEMA_VERSION` opens** — any other stamped version is rejected rather than migrated (pre-release stance).
 - **`openDatabase` duplicates the session-persistence SQLite open sequence** — extraction into a shared media layer is deferred to the planned session-backend migration (see the Agent Note's reuse audit).

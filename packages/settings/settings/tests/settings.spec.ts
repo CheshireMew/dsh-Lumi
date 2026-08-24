@@ -86,6 +86,16 @@ describe('settingsNamespace', () => {
 })
 
 describe('registration', () => {
+  it('exposes only namespaces whose owners opt into a configuration surface', async () => {
+    const { ctx } = await boot()
+    ctx.settings.register(settingsNamespace('internal'), ThemeSchema)
+    ctx.settings.register(settingsNamespace('ui-theme'), ThemeSchema, {
+      surfaces: ['configuration-client'],
+    })
+
+    expect(ctx.settings.namespacesFor('configuration-client')).toEqual(['ui-theme'])
+  })
+
   it('resolves schema defaults, then composition base, then the user layer', async () => {
     const { ctx } = await boot({ doc: { 'ui-theme': { theme: 'light' } } })
     const scope = ctx.settings.register(settingsNamespace('ui-theme'), ThemeSchema, {
@@ -440,6 +450,34 @@ describe('second review regressions', () => {
     expect(provider.doc['ui-theme']).toEqual({ theme: 'light' })
   })
 
+  it('re-resolves a replacement registration after its predecessor write commits', async () => {
+    const { ctx } = await boot({ persistDelayMs: 30 })
+    const ns = settingsNamespace('ui-theme')
+    let original: SettingsScope<ThemeConfig> | undefined
+    const owner = ctx.plugin({
+      inject: ['settings'],
+      apply: (child: Context) => {
+        original = child.settings.register(ns, ThemeSchema)
+      },
+    })
+    await owner
+    const pending = original!.update({ theme: 'light' })
+    await new Promise(resolve => setTimeout(resolve, 5))
+    await owner.dispose()
+
+    const replacement = ctx.settings.register(ns, ThemeSchema)
+    const watcher = vi.fn()
+    replacement.watch(watcher)
+    await pending
+
+    expect(replacement.get()).toEqual({ theme: 'light', fontSize: 14 })
+    expect(ctx.settings.describe()[0]?.revision).toBe(1)
+    expect(watcher).toHaveBeenCalledWith(
+      { theme: 'light', fontSize: 14 },
+      { theme: 'dark', fontSize: 14 },
+    )
+  })
+
   it('drains in-flight writes at service dispose and rejects later ones', async () => {
     const { ctx, provider, fiber } = await boot({ persistDelayMs: 20 })
     const service = ctx.settings
@@ -612,6 +650,31 @@ describe('third review regressions', () => {
     expect(finished).toBe(true)
   })
 
+  it('waits for an in-flight watcher when only the registrant disposes', async () => {
+    const { ctx, provider } = await boot()
+    let release: (() => void) | undefined
+    let scope: SettingsScope<ThemeConfig> | undefined
+    const owner = ctx.plugin({
+      inject: ['settings'],
+      apply: (child: Context) => {
+        scope = child.settings.register(settingsNamespace('ui-theme'), ThemeSchema)
+        scope.watch(async () => {
+          await new Promise<void>((resolve) => { release = resolve })
+        })
+      },
+    })
+    await owner
+    provider.pushExternal({ 'ui-theme': { theme: 'light' } })
+    await vi.waitFor(() => { expect(release).toBeDefined() })
+    let disposed = false
+    const disposal = owner.dispose().then(() => { disposed = true })
+    await new Promise(resolve => setTimeout(resolve, 15))
+    expect(disposed).toBe(false)
+    release!()
+    await disposal
+    expect(() => scope!.watch(() => {})).toThrow(/disposed/)
+  })
+
   it('rejects a Date at its path before anything persists', async () => {
     const { ctx, provider } = await boot()
     const scope = ctx.settings.register(settingsNamespace('ui-theme'), z.object({ value: z.any() }))
@@ -650,6 +713,20 @@ describe('third review regressions', () => {
     const shared = { leaf: 1 }
     await scope.update({ value: { left: shared, right: shared } })
     expect(scope.get()).toEqual({ value: { left: { leaf: 1 }, right: { leaf: 1 } } })
+  })
+
+  it('preserves __proto__ as an own JSON property through update and mutate', async () => {
+    const { ctx } = await boot()
+    const ns = settingsNamespace('ui-theme')
+    const scope = ctx.settings.register(ns, z.object({ value: z.any() }))
+    const patch = JSON.parse('{"value":{"__proto__":"first"}}') as { value: Record<string, unknown> }
+    await scope.update(patch)
+    await ctx.settings.mutate(ns, [{ op: 'set', path: ['value', '__proto__'], value: 'second' }])
+    const value = scope.get().value as Record<string, unknown>
+    expect(Object.hasOwn(value, '__proto__')).toBe(true)
+    expect(value['__proto__']).toBe('second')
+    expect(Object.getPrototypeOf({})).not.toHaveProperty('first')
+    expect(Object.getPrototypeOf({})).not.toHaveProperty('second')
   })
 
   it('contains an async settings/updated listener rejection and keeps other listeners running', async () => {
@@ -833,7 +910,7 @@ describe('mutate (path-addressed writes)', () => {
     // rebuilds the section from what it holds. A wholesale replace of that
     // rebuild deletes the stored literal key; a path unset cannot.
     const ctx = await mounted({ keyed: { apiKey: 'sk-stored', baseURL: 'https://user', reasoning: 'high' } })
-    const redacted = ctx.settings.describe({ redactSecrets: true }).find(d => d.ns === KEYED)!
+    const redacted = ctx.settings.describeForWire().find(d => d.ns === KEYED)!
     expect(redacted.user).toEqual({ baseURL: 'https://user', reasoning: 'high' })
 
     await ctx.settings.mutate(KEYED, [{ op: 'unset', path: ['baseURL'] }])

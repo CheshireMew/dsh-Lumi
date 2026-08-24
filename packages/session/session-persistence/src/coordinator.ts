@@ -7,6 +7,7 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import {
+  advanceLastHumanPromptAt,
   adoptSessionEvent,
   interruptedTurnClosers,
   KNOWN_SESSION_EVENT_TYPES,
@@ -41,6 +42,17 @@ export class SessionPersistenceCorruptionError extends Error {
   constructor(message: string, options: ErrorOptions) {
     super(message, options)
     this.name = 'SessionPersistenceCorruptionError'
+  }
+}
+
+/** A deletion named neither a materialized log nor a pending lazy create. */
+export class SessionPersistenceNotFoundError extends Error {
+  /**
+   * @param sessionId - Unknown session identity.
+   */
+  constructor(readonly sessionId: SessionId) {
+    super(`cannot delete unknown session "${sessionId}" from persistence`)
+    this.name = 'SessionPersistenceNotFoundError'
   }
 }
 
@@ -181,7 +193,12 @@ export interface PersistenceBackend<TornMarker = unknown> {
    * commit ATOMICALLY (a crash between them must not leave a materialized-but-
    * empty session). Returns once the batch is durable.
    */
-  appendBatch(meta: SessionHeader, events: readonly SessionEvent[], isMaterialized: boolean): Promise<void>
+  appendBatch(
+    meta: SessionHeader,
+    events: readonly SessionEvent[],
+    isMaterialized: boolean,
+    lastPromptAt: number | null,
+  ): Promise<void>
 
   /**
    * Make a crash repair durable: truncate the torn tail (iff
@@ -190,7 +207,20 @@ export interface PersistenceBackend<TornMarker = unknown> {
    * Used by load (truncate + synthetic closers) and by live-adoption (truncate
    * only, `closers = []`).
    */
-  commitRepair(meta: SessionHeader, tornMarker: TornMarker | undefined, closers: readonly SessionEvent[]): Promise<void>
+  commitRepair(
+    meta: SessionHeader,
+    tornMarker: TornMarker | undefined,
+    closers: readonly SessionEvent[],
+    lastPromptAt: number | null,
+  ): Promise<void>
+
+  /**
+   * Permanently remove one materialized log and its backend-owned companions.
+   * Returns false only when the backend holds no such materialized identity.
+   * @param id - Session identity to remove.
+   * @param signal - Optional cancellation before the destructive work starts.
+   */
+  deleteStored(id: SessionId, signal?: AbortSignal): Promise<boolean>
 
   /**
    * List all stored (materialized) sessions' metadata.
@@ -225,6 +255,8 @@ interface SessionState {
    * distinguish an unused id from a persisted collision.
    */
   materialized: boolean
+  /** Exact latest direct human-prompt time in the durable prefix. */
+  lastPromptAt: number | null
   /**
    * The live Session this state was bound to via `onCreated`, if any. State
    * created through the public `create()`/`load()` API has no owner; state bound
@@ -654,7 +686,7 @@ export class PersistenceCoordinator<TornMarker = unknown> {
       throw new Error(`session "${meta.id}" already has a persisted log on disk; load/resume it instead of creating`)
     }
     // Pure lazy: record intent only. No artifact until the first append.
-    this.states.set(meta.id, { meta, cursor: 0, materialized: false })
+    this.states.set(meta.id, { meta, cursor: 0, materialized: false, lastPromptAt: null })
   }
 
   // `async` so synchronous materialization failures below reject (not throw) per
@@ -679,6 +711,45 @@ export class PersistenceCoordinator<TornMarker = unknown> {
     return this.serialize(id, () => this.appendCore(id, batch))
   }
 
+  /**
+   * Permanently remove one non-live session identity after its retirement and
+   * queued writes have settled.
+   * @param id - Session identity to remove.
+   * @param signal - Optional cancellation while waiting to start.
+   */
+  async delete(id: SessionId, signal?: AbortSignal): Promise<void> {
+    await this.waitForRetirement(id, signal)
+    // A preparation load registers ownership before it joins the per-id IO
+    // chain. Reject here as well as inside deleteCore so deletion cannot queue
+    // behind that load, observe its ready-cache phase, and cut ahead of the
+    // reservation commit.
+    this.preparations.assertDeletable(id)
+    return this.serialize(id, () => this.deleteCore(id, signal), signal)
+  }
+
+  private async deleteCore(id: SessionId, signal?: AbortSignal): Promise<void> {
+    if (this.ctx.sessions.get(id) !== undefined) {
+      throw new Error(`cannot delete session "${id}" while it is live`)
+    }
+    this.preparations.assertDeletable(id)
+    const state = this.states.get(id)
+    if (state?.materialized === false) {
+      this.states.delete(id)
+      this.preparations.invalidate(id)
+      this.ctx.emit('session-persistence/deleted', id)
+      return
+    }
+    const deleted = await this.backend.deleteStored(id, signal)
+    if (!deleted) {
+      this.states.delete(id)
+      this.preparations.invalidate(id)
+      throw new SessionPersistenceNotFoundError(id)
+    }
+    this.states.delete(id)
+    this.preparations.invalidate(id)
+    this.ctx.emit('session-persistence/deleted', id)
+  }
+
   private async appendCore(id: SessionId, events: readonly SessionEvent[]): Promise<void> {
     // Every append route converges here: the public service, live write-behind
     // drains, and HMR seed/suffix adoption. Legacy-shape rejection stays at
@@ -701,11 +772,14 @@ export class PersistenceCoordinator<TornMarker = unknown> {
       }
     }
 
-    await this.backend.appendBatch(state.meta, events, state.materialized)
+    let lastPromptAt = state.lastPromptAt
+    for (const event of events) lastPromptAt = advanceLastHumanPromptAt(lastPromptAt, event)
+    await this.backend.appendBatch(state.meta, events, state.materialized, lastPromptAt)
     // The durable write is the transaction: mark materialized + advance the
     // cursor as soon as it commits (uniform across backends).
     state.materialized = true
     state.cursor += events.length
+    state.lastPromptAt = lastPromptAt
     this.preparations.invalidate(id)
   }
 
@@ -942,7 +1016,11 @@ export class PersistenceCoordinator<TornMarker = unknown> {
     }
     if (!await this.isPreparedSourceCurrent(source)) return undefined
     if (source.tornMarker !== undefined || source.closers.length > 0) {
-      await this.backend.commitRepair(source.inspection.meta, source.tornMarker, source.closers)
+      let lastPromptAt: number | null = null
+      for (const event of source.inspection.events) {
+        lastPromptAt = advanceLastHumanPromptAt(lastPromptAt, event)
+      }
+      await this.backend.commitRepair(source.inspection.meta, source.tornMarker, source.closers, lastPromptAt)
       // The repair changed the durable revision. Reload the exact committed
       // graph instead of associating the old in-memory view with a newer revision.
       return undefined
@@ -951,10 +1029,15 @@ export class PersistenceCoordinator<TornMarker = unknown> {
       meta: source.inspection.meta,
       cursor,
       materialized: true,
+      lastPromptAt: null,
     }
     state.meta = source.inspection.meta
     state.cursor = cursor
     state.materialized = true
+    state.lastPromptAt = null
+    for (const event of source.inspection.events) {
+      state.lastPromptAt = advanceLastHumanPromptAt(state.lastPromptAt, event)
+    }
     this.states.set(id, state)
     return {
       source,
@@ -1311,11 +1394,14 @@ export class PersistenceCoordinator<TornMarker = unknown> {
       throw new Error(`session "${session.header.id}" already has a persisted log on disk that does not match this live session (id collision)`)
     }
     // Truncate-only repair (no closers): the open turn is NOT closed here.
-    if (tornMarker !== undefined) await this.backend.commitRepair(meta, tornMarker, [])
+    let lastPromptAt: number | null = null
+    for (const event of storedEvents) lastPromptAt = advanceLastHumanPromptAt(lastPromptAt, event)
+    if (tornMarker !== undefined) await this.backend.commitRepair(meta, tornMarker, [], lastPromptAt)
     this.states.set(session.header.id, {
       meta: { ...meta },
       cursor: storedEvents.length,
       materialized: true,
+      lastPromptAt,
       owner: session,
     })
     const suffix = seed.slice(storedEvents.length)

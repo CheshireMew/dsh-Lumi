@@ -2,7 +2,7 @@
 
 [English](lumi-desktop-architecture.md) | 中文
 
-桌面产品是 DeepSeek Harness 的增量发行版。上游继续拥有会话、插件、模型、工具、设置和 Web UI；Electron 负责原生窗口事项，`@dsh-lumi/*` 包负责界面表现和角色行为。
+桌面产品是 DeepSeek Harness 的增量发行版。上游会话、插件、模型、工具、设置和 Web UI 的职责边界仍是默认规则；`.upstream-patches.json` 中的明确条目可以修复共用 DSH 缺陷或缺失扩展点，但不能把 Lumi 专属职责移入官方包。Electron 负责原生窗口事项，`@dsh-lumi/*` 包负责界面表现和角色行为。
 
 ## 职责归属
 
@@ -32,7 +32,7 @@ Electron 主进程先获取单实例锁，再创建无边框、启用沙箱的 `
 
 ## 持久化数据
 
-桌面应用和 CLI 解析同一个 `$DSH_HOME`。桌面应用只新增 `$DSH_HOME/lumi/packs`、`$DSH_HOME/logs/lumi-desktop` 与 `$DSH_HOME/crashes/lumi-desktop`，不会复制会话、profile、凭据或设置。只有在产品 profile 不存在时，才会用三个组合包完成初始化，因此首次创建后仍以用户自己的 profile 和主目录 patch 文件为准。Electron 窗口位置在 Electron `userData` 下使用可持久原子替换；本机文本日志与 Crashpad 转储都有明确的数量、大小和时间保留上限。Lumi 偏好、语音配置、不封顶的默契积分、每日奖励账本和有界评价身份窗口使用一个带版本的 Host 权威 `ui-lumi.bond` 记录，不会进入 Session 日志或模型上下文。
+桌面应用和 CLI 解析同一个 `$DSH_HOME`。每次启动 profile 都会在组合配置或写入 home 之前，先取得其规范化路径的独占 Host 所有权；使用同一 home 的另一个 Host 会被拒绝并得到当前占用者信息，而操作系统持有的端点会在进程崩溃后自动释放。桌面应用只新增 `$DSH_HOME/lumi/packs`、`$DSH_HOME/logs/lumi-desktop` 与 `$DSH_HOME/crashes/lumi-desktop`，不会复制会话、profile、凭据或设置。只有在产品 profile 不存在时，才会用三个组合包完成初始化，因此首次创建后仍以用户自己的 profile 和主目录 patch 文件为准。Electron 窗口位置在 Electron `userData` 下使用可持久原子替换；本机文本日志与 Crashpad 转储都有明确的数量、大小和时间保留上限。Lumi 偏好、语音配置、不封顶的默契积分、每日奖励账本和有界评价身份窗口使用一个带版本的 Host 权威 `ui-lumi.bond` 记录，不会进入 Session 日志或模型上下文。
 
 ## 角色与浏览器模型
 
@@ -46,6 +46,8 @@ Host 会验证 `$DSH_HOME/lumi/packs/<pack-id>` 下的 Character Pack v1 manifes
 
 `.upstream.json` 记录官方仓库、分支、最近一次验收通过的提交，以及需要人工复查的文件。`upstream` remote 从官方仓库拉取内容，本地已禁用它的推送地址。只有在使用个人 fork 时才添加 `origin` remote。
 
+`.upstream-patches.json` 负责记录相对官方 DSH 有意保留的差异。每项活动补丁都要说明为何现有 Lumi 增量扩展点不足、自己负责的准确路径、针对性验证、退役条件，以及已经人工复查到哪个官方提交。尚未得到这种语义归类的策略建立前差异，会作为带内容哈希的旧基线保留；这不是笼统授权，任何内容变化都会使 `verify-upstream-patches` 失败，直到该路径升级为活动补丁，或在复查后被明确重新冻结。Vendored Cordis 不属于这份清单。
+
 受保护的更新入口是：
 
 ```powershell
@@ -53,9 +55,9 @@ pnpm run upstream:status
 pnpm run sync:upstream
 ```
 
-`upstream:status` 只读。`sync:upstream` 会拒绝有未提交改动的工作区，获取官方提交和 tags，把 `upstream-base` 快进到最新官方提交，返回 `main`，创建 `codex/sync-YYYYMMDD-<sha>`，再合并 `upstream-base`。遇到冲突或门禁失败时会保留同步分支与工作现场。在这个分支上提交修复后，即使本地日期已经变化，也可以再次运行命令并原地续验；若同名分支已存在，则不能从其他分支恢复它。合并成功后依次运行 Lumi 契约与构建、官方 GUI 与 Web replay、仓库检查和已构建 Electron 测试。脚本总会写入只有一个末尾换行的 `docs/upstream-sync/<date>.md`；只有全部成功时才更新 `.upstream.json` 和 `UPSTREAM_BASE.md`。Git `rerere` 已启用，可以复用重复出现的冲突解决结果。
+`upstream:status` 只读。`sync:upstream` 会拒绝有未提交改动的工作区，获取官方提交和 tags，把 `upstream-base` 快进到最新官方提交，返回 `main`，创建 `codex/sync-YYYYMMDD-<sha>`，再合并 `upstream-base`。遇到冲突或门禁失败时会保留同步分支与工作现场。在这个分支上提交修复后，即使本地日期已经变化，也可以再次运行命令并原地续验；若同名分支已存在，则不能从其他分支恢复它。合并成功后依次运行 Lumi 契约与构建、官方 GUI 与 Web replay、仓库检查、下游补丁清单和已构建 Electron 测试。当官方改动触及某项活动补丁时，报告会点名该补丁；在清单记录人工复查结果之前，验证不会通过。结果必须是保留、重放、改接新的扩展点或退役之一。脚本总会写入只有一个末尾换行的 `docs/upstream-sync/<date>.md`；只有全部成功时才更新 `.upstream.json` 和 `UPSTREAM_BASE.md`。Git `rerere` 已启用，可以复用重复出现的冲突解决结果。
 
-解决源码冲突时，先保留上游意图，再重新应用少量产品扩展。不要把官方组合包配置项复制进 Lumi 组合包。`pnpm-lock.yaml` 无法机械解决冲突时，应运行 `pnpm install` 重新生成，而不是手工拼接依赖记录。报告会列出官方提交、上游触及的受监视接缝、自动化结果，以及仍需人工执行的官方 Web、Lumi 和真实模型检查。
+解决源码冲突时，先保留上游意图，再只重新应用已经登记的下游补丁行为；官方出现新扩展点时，优先把补丁迁过去，而不是继续保留源码改动。不要把官方组合包配置项复制进 Lumi 组合包。`pnpm-lock.yaml` 无法机械解决冲突时，应运行 `pnpm install` 重新生成，而不是手工拼接依赖记录。报告会列出官方提交、上游触及的受监视接缝和受管补丁、自动化结果，以及仍需人工执行的官方 Web、Lumi 和真实模型检查。
 
 ## 发布边界
 

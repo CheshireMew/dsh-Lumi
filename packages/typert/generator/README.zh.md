@@ -12,6 +12,8 @@ TypeScript 项目分析器和模型驱动的 Typert 生成器。在生成任何�
 
 `WorkspaceAnalyzer` 默认采用 `check` 模式，遇到 TypeScript 语法或语义诊断、可达公开声明缺少类型标注、跨包私有引用，以及模型无法无损保留的可达声明合并时，分析会失败。`write` 模式会插入类型检查器推导出的类型标注，重建该程序，并返回无诊断的检查模式模型。
 
+`FaceAnalyzer` 在三层职责之上协调 workspace 与导出分析：`FaceGraphAnalyzer` 构建声明与类型引用，`FaceRemoteCodecAnalyzer` 为序列化输入输出建模，`FaceRemoteAnalyzer` 为 Remote service 与调用建模。共享编译器辅助逻辑位于 `analyzer-utils.ts` 和 `analysis-internals.ts`；任何一层都不拥有 workspace 发现或产物生成。
+
 ## 产物生成与选择性发布
 
 `FaceModelEmitter` 只消费模型。它会生成可执行 JavaScript，其中包含受支持的 Zod schema 和一个 `TYPERT` contribution；同时生成声明文件，通过包的公开导出将其中的 schema 标注为 `z.ZodType<SourceType>`。遇到不支持的 Zod 投影时，生成会失败，不会展平或弱化源类型。

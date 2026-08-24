@@ -15,6 +15,7 @@ import { isAbsolute } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import Schema from '@deepseek-ai/schemastery'
 import { createUserMessage, errorChain } from '@deepseek-ai/dsh-llm'
+import { PRODUCT_VERSION } from '@deepseek-ai/dsh-product-identity'
 import {
   AgentSideConnection,
   ndJsonStream,
@@ -236,7 +237,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
         // the latest supported" both resolve to this server's one version.
         return Promise.resolve({
           protocolVersion: PROTOCOL_VERSION,
-          agentInfo: { name: 'deepseek-harness-acp', version: '0.0.1' },
+          agentInfo: { name: 'deepseek-harness-acp', version: PRODUCT_VERSION },
           agentCapabilities: {
             promptCapabilities: { image: false, audio: false, embeddedContext: false },
           },

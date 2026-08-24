@@ -216,6 +216,18 @@ export class SessionPreparations<Source extends PreparedSource, CommitState> {
   }
 
   /**
+   * Reject deletion while resume owns an unpublished Session. Ready cached
+   * observations are discardable after the authoritative log is removed.
+   * @param id - Session identity to check.
+   */
+  assertDeletable(id: SessionId): void {
+    const phase = this.entries.get(id)?.phase
+    if (phase === 'loading' || phase === 'committing' || phase === 'reserved') {
+      throw new Error(`cannot delete session "${id}" while its persisted preparation is active`)
+    }
+  }
+
+  /**
    * Remove a completed entry for an already-serialized append adoption.
    * @param id - adopted session identity.
    * @returns the prepared source, or undefined when no ready entry exists.

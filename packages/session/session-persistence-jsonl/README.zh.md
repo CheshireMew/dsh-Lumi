@@ -12,12 +12,14 @@ JSONL 持久会话存储后端：`SessionPersistence` 的一个具体实现（`d
     <encoded-id>/                # session-owned directory
       session.jsonl.zstd         # default: checksummed header frame + append frames
       session.jsonl              # only with compression: 'none'
+      session.index.json         # revision-bound latest-human-prompt index
 ```
 
 - 第一个逻辑行是不可变的 `SessionHeader`，标记为 `{ type: 'session', version, id, cwd?, createdAt, parentSession?, seedLength?, origin?, delegationDepth, agentPreset? }`。`delegationDepth` 在磁盘上必需，顶层会话为 `0`；缺失或无效值会拒绝日志。`agentPreset` 必须持久化，因为它决定了被恢复会话的工具与提示词——恢复成另一套组装，就会回放模型已无法据以行动的历史。后续每个逻辑行是一条存储记录；`assistant/chunk` 事件绝不丢弃，且 `seq` 在解码日志中保持连续（`events[i].seq === i`）。
 - 存储记录是原样 `SessionEvent` JSON，或在 `packChunks` 已启用且连续段符合条件时写入的**打包分片行**（`text-chunks` / `reasoning-chunks` / `tool-call-chunks`；像 header 的 `session` 一样不带斜杠，因此行 tag 不会与事件类型混淆）：一行保存至少 3 个连续同 block `assistant/chunk` delta 事件，`seq0`/`time0` 和各成员的 `dt` 间隔精确重建每个成员的 `seq`/`time`。无损 codec 位于 `@deepseek-ai/dsh-session`（`packChunkRuns`/`decodeStorageRecord`），并使用精确形态 allowlist：任何未识别内容原样存储。读取与布局无关：`load` 始终解码行，因此打包、非打包和混合文件加载结果一致。
 - 项目目录保留规范化 cwd 的可读形式，便于导航，并限制在文件系统组件上限内。分隔符替换和截断刻意有损，因此规范化相同的 cwd 字符串共享项目目录；会话 id 仍选择不同会话目录。在不区分大小写的文件系统上，只有文件系统规范化将两种写法解析到同一 transcript（文本记录）时，身份验证才接受备选路径写法。配置根仍由部署控制：可以是项目本地、共享、临时或集中式。[项目会话目录决策](../../../.agents/notes/implemented/architecture/2026-07-24-project-session-directories.md) 记录这项取舍。
 - 会话 id 是未验证的带品牌类型的字符串，因此在使用前单射转义为一个安全路径段（无遍历、无冲突）。结果目录保留给其他会话自有产物；发现只读取固定 transcript 文件名。
+- `session.index.json` 记录精确的最后一次真人直接 prompt 时间及其概括的 transcript revision。append 会在 transcript 持久后刷新它。列出流程仅在 revision 和完整性摘要都匹配时信任该文件；索引缺失、落后、语法错误或内容损坏时，会从 revision 稳定的 transcript 读取中重建并原子替换。索引写入失败不能回滚已经持久的 append，因此后端会记录警告，由下一次列出完成精确重建。
 
 ## 配置
 
@@ -46,6 +48,7 @@ JSONL 持久会话存储后端：`SessionPersistence` 的一个具体实现（`d
 - **非修改式检查。**`inspect()` 返回不可变、平衡的逻辑视图，并可在内存中合成恢复 closer，但不会截断不完整尾部或更改轻量修订。
 - **连续 seq。**`append` 拒绝第一个 `seq` 不继续已存储日志的批次，并拒绝无法 JSON 序列化的 `event.data`，同时命名违规事件类型。
 - **轻量修订。**`listSnapshots(signal?)` 使用 device、inode、size 和纳秒时间戳标识日志，避免解析完整日志；该标识会在 append、修复、替换或存储变更后改变。完整前缀读取要求读取字节前后的身份一致，`readStoredRevision()` 使用同一身份校验保留的 preparation，而不加载日志。快照列表通过产物发现原样转发该信号，并在每个 `stat` 前后检查取消；由于文件系统 `stat` 不可中断，取消会等待活动调用完成，然后在不启动另一次调用的情况下拒绝。
+- **永久删除。**`delete()` 会在同一会话的生命周期所有权解除后，移除固定 transcript 及其 `session.index.json` 配套文件。会话目录变空时一并移除；若其中存在未知的会话自有文件，则保留这些文件和非空目录。transcript 缺失时拒绝，而不会谎报提交成功。
 
 ## 写入路径
 
@@ -72,6 +75,5 @@ JSONL 存储不修改实时请求前缀。只有重建历史、当前 envelope �
 - **只加载已配置编码和当前 `SESSION_FORMAT_VERSION`（v0）**：更改压缩需要独立/全新根，或选择遗留原始 mode；预发布格式没有迁移。
 - **平铺文件存储布局不加载**：加载前使用独立根，或将预发布产物移入项目/会话目录布局。
 - **压缩文件不能直接按行读取**：使用后端加载；或在写入新根前选择 `compression: 'none'`，以便外部行 reader 使用。
-- **不删除会话文件**：日志在 `root` 下累积，直到外部移除（seam 无删除接口）。
 - **每会话一个活动 writer**：append 和修复只在所属后端实例内协调。在所有者完成完全停稳的 dispose 前，其他后端实例或进程不得写入同一会话；初始同 id 发布仍通过 POSIX 无覆盖硬链接或 Windows 无替换 write-through rename 保持冲突安全。
 - **POSIX 实体化需要硬链接支持**：第一次 append 使用 `link()`，使同 id 竞态失败，而不覆盖已提交日志；Windows 使用无替换 write-through rename。

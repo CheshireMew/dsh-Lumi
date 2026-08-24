@@ -40,6 +40,7 @@
     // smoke policy). webserver has zero workspace deps and no cordis merge,
     // so it cannot drag host-side Context augmentation into this program.
     { "path": "./packages/host/webserver" },
+    { "path": "./packages/api/protocol" },
     // Compaction seam: the client-runtime pin test value-imports the canonical
     // checkpoint const from the cordis-free dsh-compaction/checkpoint leaf and
     // deliberately never loads the dsh-compaction package root or the host-side
@@ -62,6 +63,7 @@
     { "path": "./packages/extensions/cordis-client-runner" },
     { "path": "./packages/extensions/ui-cordis" },
     { "path": "./packages/test-support/client-runtime" },
+    { "path": "./packages/test-support/client-api" },
     { "path": "./packages/client/ui-layout" },
     { "path": "./packages/client/lumi-character/tsconfig.client.json" },
     { "path": "./packages/client/lumi-shell" },

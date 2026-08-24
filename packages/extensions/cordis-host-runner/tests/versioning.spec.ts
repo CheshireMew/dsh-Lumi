@@ -38,7 +38,7 @@ describe('dynamic Plugin versions', () => {
     expect(runner.inventory()[0]?.nextPackageId).toBeUndefined()
   })
 
-  it('cancels and retracts a Host activation owned by the pending approval', async () => {
+  it('cancels and retracts a Host activation when the requesting Tool is cancelled', async () => {
     const { runner, gateway } = await setup()
     const defined = runner.define({
       sessionId: AGENT_A.id,
@@ -67,9 +67,8 @@ describe('dynamic Plugin versions', () => {
     controller.abort()
 
     await expect(pending).resolves.toMatchObject({ ok: true, status: 'awaiting-approval' })
-    expect(runner.inventory()[0]?.activeRun).toBeDefined()
-    await runner.stop(AGENT_A, defined.pluginId)
     expect(runner.inventory()[0]?.activeRun).toBeUndefined()
+    expect(runner.inventory()[0]?.latestRun).toMatchObject({ status: 'cancelled' })
   })
 
   it('does not stop an existing Host run when an attaching page fails to load Client code', async () => {

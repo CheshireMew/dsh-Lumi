@@ -7,6 +7,7 @@
  */
 
 import { WebError } from '@deepseek-ai/dsh-web'
+import { PRODUCT_TOKEN } from '@deepseek-ai/dsh-product-identity'
 import type {
   WebSearchProvider,
   WebSearchRequest,
@@ -46,8 +47,8 @@ export const DEEPSEEK_DEFAULT_MAX_TOKENS = 4096
 /** Default maximum `web_search` server-tool uses per request. */
 export const DEEPSEEK_DEFAULT_MAX_USES = 5
 
-/** Attribution header sent on every request. Bump with the package version. */
-const USER_AGENT = 'deepseek-harness/0.0.1'
+/** Attribution header sent on every request. */
+const USER_AGENT = PRODUCT_TOKEN
 
 /**
  * Exact secret-free DeepSeek Messages request recorded immediately before one

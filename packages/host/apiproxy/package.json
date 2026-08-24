@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-host-apiproxy",
-  "description": "API gateway: the ApiProxy contract (api/), the fetch carrier pair (fetch/), and the host-side gateway plugin providing ctx.apiProxy",
+  "description": "Host implementation of the legacy application API",
   "version": "0.1.0-rc.5",
   "publishConfig": {
     "access": "public"
@@ -23,28 +23,16 @@
       "default": "./lib/invariant.js"
     },
     "./src/*": "./src/*",
-    "./package.json": "./package.json",
-    "./api": {
-      "types": "./lib/types/api/index.d.ts",
-      "default": "./lib/types/api/index.js"
-    },
-    "./api/*": {
-      "types": "./lib/types/api/*.d.ts",
-      "default": "./lib/types/api/*.js"
-    },
-    "./client": {
-      "types": "./lib/types/fetch/client.d.ts",
-      "default": "./lib/types/fetch/client.js"
-    }
+    "./package.json": "./package.json"
   },
   "files": [
     "lib/index.js",
     "lib/invariant.js",
-    "lib/types/**/*.js",
     "lib/types/**/*.d.ts"
   ],
   "license": "MIT",
   "dependencies": {
+    "@deepseek-ai/dsh-api-protocol": "workspace:^",
     "@deepseek-ai/dsh-attachment": "workspace:^",
     "@deepseek-ai/dsh-agent": "workspace:^",
     "@deepseek-ai/dsh-agent-default-model": "workspace:^",
@@ -56,6 +44,7 @@
     "@deepseek-ai/dsh-host-directory-picker": "workspace:^",
     "@deepseek-ai/dsh-llm": "workspace:^",
     "@deepseek-ai/dsh-native-command": "workspace:^",
+    "@deepseek-ai/dsh-product-identity": "workspace:^",
     "@deepseek-ai/dsh-session": "workspace:^",
     "@deepseek-ai/dsh-session-persistence": "workspace:^",
     "@deepseek-ai/dsh-session-projection": "workspace:^",
@@ -88,7 +77,6 @@
     "@deepseek-ai/dsh-storage": "workspace:^",
     "@deepseek-ai/dsh-storage-domain": "workspace:^",
     "@deepseek-ai/dsh-typert-protocol": "workspace:^",
-    "@deepseek-ai/dsh-typert-registry": "workspace:^",
-    "@deepseek-ai/cordis": "workspace:^"
+    "@deepseek-ai/dsh-typert-registry": "workspace:^"
   }
 }

@@ -36,6 +36,8 @@ export class MemoryMediaPool {
   readonly media = new Map<string, MemoryMedium>()
   /** Unit name → stamped version; tests may pre-stamp to force `version-mismatch`. */
   readonly versions = new Map<string, number>()
+  /** Unit names removed through the backend destroy primitive, in call order. */
+  readonly destroyed: string[] = []
   /**
    * When positive, that many subsequent write primitives (putRecord /
    * deleteRecord / setGlobal) reject without touching the medium, decrementing
@@ -149,6 +151,15 @@ export class MemoryStorageBackend implements StorageBackend {
         }
         this.openUnits.add(descriptor.name)
         return new MemoryKvUnit(this.pool, medium, descriptor, () => this.openUnits.delete(descriptor.name))
+      },
+      destroy: async (descriptor: KvUnitDescriptor): Promise<void> => {
+        if (this.closed) throw new StorageError('closed', 'memory backend is closed')
+        if (this.openUnits.has(descriptor.name)) {
+          throw new Error(`memory unit '${descriptor.name}' is already open (destroy requires a closed unit)`)
+        }
+        this.pool.media.delete(descriptor.name)
+        this.pool.versions.delete(descriptor.name)
+        this.pool.destroyed.push(descriptor.name)
       },
     }
   }

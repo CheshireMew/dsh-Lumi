@@ -1567,6 +1567,11 @@
     },
     {
       "doc": "docs/subsystems/settings.md",
+      "symbol": "SettingsSurface",
+      "source": "packages/settings/settings/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/settings.md",
       "symbol": "SettingsRegisterOptions",
       "source": "packages/settings/settings/src/index.ts"
     },
@@ -1599,11 +1604,6 @@
       "doc": "docs/subsystems/credentials.md",
       "symbol": "CredentialInfo",
       "source": "packages/credentials/credentials/src/index.ts"
-    },
-    {
-      "doc": "docs/subsystems/settings.md",
-      "symbol": "SettingsDescribeOptions",
-      "source": "packages/settings/settings/src/index.ts"
     },
     {
       "doc": "docs/subsystems/llm-streaming.md",

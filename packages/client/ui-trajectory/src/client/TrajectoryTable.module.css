@@ -271,7 +271,7 @@
   border-radius: 2px;
   color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 2px 6px var(--dsw-alias-border-l3);
   content: attr(data-label);
   font: 9px/12px var(--ds-font-family-code);
   opacity: 0;
@@ -1794,6 +1794,6 @@
     width: min(92%, 420px);
     max-width: 92%;
     border-left-color: var(--dsw-alias-border-l3);
-    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.14);
+    box-shadow: -12px 0 32px var(--dsw-alias-border-l3);
   }
 }

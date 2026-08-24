@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { Session, SessionId, isJsonValue } from '@deepseek-ai/dsh-session'
+import SessionStore, { advanceLastHumanPromptAt, Session, SessionId, isJsonValue } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import {
   DEFAULT_PREPARED_SESSION_CACHE_SIZE, DEFAULT_WRITE_BATCH_MAX_DELAY_MS, MAX_WRITE_BATCH_DELAY_MS,
@@ -101,6 +101,10 @@ class MemoryPersistence extends SessionPersistence implements PersistenceBackend
     return this.coordinator.append(id, events)
   }
 
+  delete(id: SessionId, signal?: AbortSignal): Promise<void> {
+    return this.coordinator.delete(id, signal)
+  }
+
   override prepare(id: SessionId, signal?: AbortSignal): ReturnType<PersistenceCoordinator['prepare']> {
     return this.coordinator.prepare(id, signal)
   }
@@ -161,6 +165,10 @@ class MemoryPersistence extends SessionPersistence implements PersistenceBackend
     if (closers.length > 0) entry.events.push(...structuredClone(closers) as SessionEvent[])
   }
 
+  async deleteStored(id: SessionId): Promise<boolean> {
+    return this.store.delete(id)
+  }
+
   async list(signal?: AbortSignal): Promise<SessionHeader[]> {
     signal?.throwIfAborted()
     return [...this.store.values()].map(e => structuredClone(e.meta))
@@ -170,6 +178,7 @@ class MemoryPersistence extends SessionPersistence implements PersistenceBackend
     signal?.throwIfAborted()
     return [...this.store.values()].map(entry => ({
       header: structuredClone(entry.meta),
+      lastPromptAt: entry.events.reduce<number | null>(advanceLastHumanPromptAt, null),
       revision: memoryRevision(entry),
     }))
   }
@@ -228,6 +237,10 @@ class ControlledBackend implements PersistenceBackend<never> {
     if (entry !== undefined) entry.events.push(...structuredClone(closers) as SessionEvent[])
   }
 
+  async deleteStored(id: SessionId): Promise<boolean> {
+    return this.store.delete(id)
+  }
+
   async list(): Promise<SessionHeader[]> {
     return [...this.store.values()].map(entry => structuredClone(entry.meta))
   }
@@ -246,6 +259,71 @@ runPersistenceContract('memory', async () => {
     persistence: ctx.sessionPersistence,
     dispose: async () => { await fiber.dispose() },
   }
+})
+
+describe('PersistenceCoordinator deletion ownership', () => {
+  it('emits the deletion event only after the backend identity is gone', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const backend = new ControlledBackend()
+    const id = SessionId('delete-event-order')
+    backend.store.set(id, { meta: meta(id), events: oneTurnLog() })
+    const coordinator = new PersistenceCoordinator(ctx, backend)
+    const observed: Array<{ id: SessionId; absent: boolean }> = []
+    ctx.on('session-persistence/deleted', (sessionId) => {
+      observed.push({ id: sessionId, absent: !backend.store.has(sessionId) })
+    })
+
+    try {
+      await coordinator.delete(id)
+      expect(observed).toEqual([{ id, absent: true }])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('rejects a live identity without mutating its durable log', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const backend = new ControlledBackend()
+    const id = SessionId('delete-live')
+    const stored = { meta: meta(id), events: oneTurnLog() }
+    backend.store.set(id, structuredClone(stored))
+    const coordinator = new PersistenceCoordinator(ctx, backend)
+    const get = vi.spyOn(ctx.sessions, 'get').mockReturnValue(Session.create(id, stored.events, stored.meta))
+
+    try {
+      await expect(coordinator.delete(id)).rejects.toThrow(/while it is live/)
+      expect(backend.store.get(id)).toEqual(stored)
+    } finally {
+      get.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('rejects deletion while an unpublished resume preparation owns the identity', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const backend = new ControlledBackend()
+    const id = SessionId('delete-reserved')
+    backend.store.set(id, { meta: meta(id), events: oneTurnLog() })
+    const gate = Promise.withResolvers<boolean>()
+    backend.beforeLoadStored = async () => { await gate.promise }
+    const coordinator = new PersistenceCoordinator(ctx, backend)
+
+    try {
+      const preparing = coordinator.prepare(id)
+      await vi.waitFor(() => { expect(backend.loadAttempts).toBe(1) })
+      await expect(coordinator.delete(id)).rejects.toThrow(/preparation is active/)
+      expect(backend.store.has(id)).toBe(true)
+      gate.resolve(true)
+      const preparation = await preparing
+      preparation[Symbol.dispose]()
+    } finally {
+      gate.resolve(true)
+      await ctx.fiber.dispose()
+    }
+  })
 })
 
 describe('the inherited readRaw default', () => {

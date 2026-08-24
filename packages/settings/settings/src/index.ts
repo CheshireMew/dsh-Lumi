@@ -8,11 +8,11 @@
 
 import { Context, Service } from '@deepseek-ai/cordis'
 import type z from '@deepseek-ai/schemastery'
-import { redactSecrets } from './redact.ts'
+import { redactSecrets, schemaForWire } from './redact.ts'
 import type { RedactedSecret } from './redact.ts'
 import type { SettingsNamespace, SettingsUpdateSource } from './types.ts'
 
-export { redactSecrets } from './redact.ts'
+export { redactSecrets, schemaForWire } from './redact.ts'
 export type { RedactedSecret, RedactedValue } from './redact.ts'
 export type { SettingsNamespace, SettingsUpdateSource } from './types.ts'
 
@@ -33,12 +33,17 @@ export function settingsNamespace(value: string): SettingsNamespace {
 /** When a namespace's changes take effect for its owner. */
 export type SettingsApplies = 'live' | 'restart'
 
+/** Configuration surfaces a namespace owner may explicitly opt into. */
+export type SettingsSurface = 'configuration-client'
+
 /** Registration options beyond the namespace schema. */
 export interface SettingsRegisterOptions<T> {
   /** Composition-layer values resolved below the user layer (entry-config subset). */
   base?: Partial<T>
   /** Owner's effect timing, surfaced to configuration UIs; defaults to `live`. */
   applies?: SettingsApplies
+  /** Configuration surfaces allowed to read and write this namespace. */
+  surfaces?: readonly SettingsSurface[]
   /**
    * Reject a resolved section the owner could not act on, for constraints its
    * schema cannot express — a cross-field requirement, or one field's validity
@@ -85,18 +90,8 @@ export interface SettingsDescriptor {
   user?: unknown
   /** Owner's declared effect timing. */
   applies: SettingsApplies
-  /** Schema-declared secret positions; present only under `redactSecrets`. */
+  /** Schema-declared secret positions; present on {@link SettingsProvider.describeForWire} results. */
   secrets?: RedactedSecret[]
-}
-
-/** Options for {@link SettingsProvider.describe}. */
-export interface SettingsDescribeOptions {
-  /**
-   * Strip `role('secret')` fields from `value`/`base`/`user` and enumerate
-   * them in each descriptor's `secrets`. Every wire surface MUST pass this;
-   * the verbatim default exists for same-process configuration UIs only.
-   */
-  redactSecrets?: boolean
 }
 
 /** Owner-facing handle for one registered namespace. */
@@ -108,7 +103,8 @@ export interface SettingsScope<T> {
    * of one callback run asynchronously, one at a time, in commit order; a
    * rejection is contained and logged like a sync throw. After the disposer
    * returns, no further invocation starts — one already queued is skipped;
-   * one already started still settles, and service disposal waits for it.
+   * one already started still settles. Registrant and service disposal both
+   * wait for started invocations they own.
    * @param callback - invoked after each commit with the next and previous values.
    * @returns the disposer removing this observer.
    */
@@ -153,7 +149,7 @@ export function deepEqualJson(a: unknown, b: unknown): boolean {
   const right = b as Record<string, unknown>
   const keys = Object.keys(left)
   if (keys.length !== Object.keys(right).length) return false
-  return keys.every(key => key in right && deepEqualJson(left[key], right[key]))
+  return keys.every(key => Object.hasOwn(right, key) && deepEqualJson(left[key], right[key]))
 }
 
 /**
@@ -189,6 +185,18 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null
 }
 
+/** Define one own enumerable data property without invoking `__proto__` setters. */
+function setDataProperty(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, { value, enumerable: true, configurable: true, writable: true })
+}
+
+/** Property-safe shallow clone for a settings data record. */
+function cloneDataRecord(source: Record<string, unknown>): Record<string, unknown> {
+  const output: Record<string, unknown> = Object.create(null) as Record<string, unknown>
+  for (const [key, value] of Object.entries(source)) setDataProperty(output, key, value)
+  return output
+}
+
 /**
  * One path-addressed edit to a namespace's user section. Path mutation exists
  * for a caller holding an INCOMPLETE view of the section — a configuration UI
@@ -206,15 +214,19 @@ function applyPathOp(section: Record<string, unknown>, op: SettingsPathOp): Reco
   const [head, ...rest] = op.path
   // The empty path addresses the section itself.
   if (head === undefined) {
-    if (op.op === 'unset') return {}
+    if (op.op === 'unset') return Object.create(null) as Record<string, unknown>
     if (!isPlainObject(op.value)) {
       throw new TypeError('settings mutate: setting the section root requires a plain object')
     }
-    return { ...op.value }
+    return cloneDataRecord(op.value)
   }
   if (rest.length === 0) {
-    if (op.op === 'set') return { ...section, [head]: op.value }
-    const { [head]: _removed, ...kept } = section
+    const kept = cloneDataRecord(section)
+    if (op.op === 'set') {
+      setDataProperty(kept, head, op.value)
+      return kept
+    }
+    Reflect.deleteProperty(kept, head)
     return kept
   }
   const child = section[head]
@@ -222,9 +234,13 @@ function applyPathOp(section: Record<string, unknown>, op: SettingsPathOp): Reco
     // Unsetting through an absent path is already satisfied; setting through
     // one creates the intermediate objects it needs.
     if (op.op === 'unset') return section
-    return { ...section, [head]: applyPathOp({}, { ...op, path: rest }) }
+    const next = cloneDataRecord(section)
+    setDataProperty(next, head, applyPathOp({}, { ...op, path: rest }))
+    return next
   }
-  return { ...section, [head]: applyPathOp(child, { ...op, path: rest }) }
+  const next = cloneDataRecord(section)
+  setDataProperty(next, head, applyPathOp(child, { ...op, path: rest }))
+  return next
 }
 
 /** Human label for a value that lossless JSON cannot represent (numbers reject inline). */
@@ -272,12 +288,10 @@ function cloneJsonShaped(
     if (isPlainObject(value)) {
       if (visiting.has(value)) throw reject('a circular reference', path)
       visiting.add(value)
-      // TODO(settings-json-properties): Use property-safe construction here and
-      // in mergeLayers so valid JSON keys such as "__proto__" remain own data.
-      const out: Record<string, unknown> = {}
+      const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>
       for (const [key, entry] of Object.entries(value)) {
         if (entry === undefined) continue
-        out[key] = clone(entry, `${path}.${key}`)
+        setDataProperty(out, key, clone(entry, `${path}.${key}`))
       }
       visiting.delete(value)
       return out
@@ -297,9 +311,9 @@ function cloneJsonShaped(
 function mergeLayers(under: unknown, over: unknown): unknown {
   if (over === undefined) return under
   if (!isPlainObject(under) || !isPlainObject(over)) return over
-  const merged: Record<string, unknown> = { ...under }
+  const merged = cloneDataRecord(under)
   for (const [key, value] of Object.entries(over)) {
-    merged[key] = key in merged ? mergeLayers(merged[key], value) : value
+    setDataProperty(merged, key, Object.hasOwn(merged, key) ? mergeLayers(merged[key], value) : value)
   }
   return merged
 }
@@ -326,6 +340,7 @@ interface SettingsRegistration {
   schema: z<unknown>
   base: unknown
   applies: SettingsApplies
+  surfaces: ReadonlySet<SettingsSurface>
   /** Owner-supplied check for constraints the schema cannot express. */
   validate?: (value: unknown) => void
   resolved: unknown
@@ -339,6 +354,8 @@ interface SettingsRegistration {
    */
   revision: number
   watchers: Set<SettingsWatcher>
+  /** Cleared before the registrant's disposer drains its already-started callbacks. */
+  active: boolean
 }
 
 /**
@@ -424,9 +441,10 @@ export abstract class SettingsProvider extends Service {
 
   /**
    * Register a namespace schema and receive its owner scope. The registration
-   * is an effect on the calling plugin's fiber: disposing that fiber removes
-   * the namespace and its observers. An invalid stored section fails the
-   * registration itself — the earliest point where the schema can judge it.
+   * is an effect on the calling plugin's fiber: disposing that fiber
+   * deactivates its observers, waits for started callbacks, then removes the
+   * namespace. An invalid stored section fails the registration itself — the
+   * earliest point where the schema can judge it.
    * @param ns - unique namespace; duplicate registration fails loud.
    * @param schema - schemastery schema resolving this namespace's value.
    * @param options - composition `base` layer and effect timing.
@@ -441,22 +459,34 @@ export abstract class SettingsProvider extends Service {
       schema: schema as z<unknown>,
       base: options?.base,
       applies: options?.applies ?? 'live',
+      surfaces: new Set(options?.surfaces ?? []),
       ...options?.validate === undefined
         ? {}
         : { validate: options.validate as (value: unknown) => void },
       resolved: deepFreeze(this.resolve(schema, options?.base, this.section(ns), options?.validate)),
       revision: 0,
       watchers: new Set(),
+      active: true,
     }
     this.ctx.effect(() => {
       this.registrations.set(ns, registration)
-      // TODO(settings-registration-quiescence): Deactivate every watcher and await
-      // its tail on disposal so callbacks cannot outlive the registrant fiber.
-      return () => this.registrations.delete(ns)
+      return async () => {
+        registration.active = false
+        if (this.registrations.get(ns) === registration) this.registrations.delete(ns)
+        const tails = [...registration.watchers].map((watcher) => {
+          watcher.active = false
+          return watcher.tail
+        })
+        registration.watchers.clear()
+        await Promise.allSettled(tails)
+      }
     }, `settings.register(${JSON.stringify(String(ns))})`)
     return {
       get: () => registration.resolved as T,
       watch: (callback) => {
+        if (!registration.active) {
+          throw new Error(`settings namespace "${ns}" registration is disposed and cannot be watched`)
+        }
         const watcher: SettingsWatcher = { callback: callback, tail: Promise.resolve(), active: true }
         registration.watchers.add(watcher)
         return () => {
@@ -473,10 +503,36 @@ export abstract class SettingsProvider extends Service {
    * Describe every registered namespace for configuration surfaces, including
    * the composition `base` and raw user layers so a form can mark which fields
    * the user overrode (presence in `user`) and what a reset returns to.
-   * @param options - redaction switch; wire surfaces must redact.
    * @returns one descriptor per registered namespace, in registration order.
    */
-  describe(options?: SettingsDescribeOptions): SettingsDescriptor[] {
+  describe(): SettingsDescriptor[] {
+    return this.describeRegistrations(false)
+  }
+
+  /**
+   * Describe every namespace for an untrusted client. This is a separate
+   * method so a wire carrier cannot forget an opt-in flag: values and layers
+   * contain only schema-proven JSON fields, opaque nodes become write-only
+   * slots, and serialized schema literals are scrubbed.
+   * @returns one fail-closed descriptor per registered namespace.
+   */
+  describeForWire(): SettingsDescriptor[] {
+    return this.describeRegistrations(true)
+  }
+
+  /**
+   * List namespaces whose owners opted into one configuration surface.
+   * @param surface - configuration surface requesting access.
+   * @returns registered namespaces in registration order.
+   */
+  namespacesFor(surface: SettingsSurface): SettingsNamespace[] {
+    return [...this.registrations.values()]
+      .filter(registration => registration.surfaces.has(surface))
+      .map(registration => registration.ns)
+  }
+
+  /** Build same-process or fail-closed wire descriptors from the live registrations. */
+  private describeRegistrations(forWire: boolean): SettingsDescriptor[] {
     return [...this.registrations.values()].map((registration) => {
       let user: Record<string, unknown> | undefined
       try {
@@ -491,14 +547,14 @@ export abstract class SettingsProvider extends Service {
       const detachedUser = user === undefined ? undefined : structuredClone(user)
       const descriptor: SettingsDescriptor = {
         ns: registration.ns,
-        schema: registration.schema.toJSON(),
+        schema: forWire ? schemaForWire(registration.schema as z<never>) : registration.schema.toJSON(),
         value: registration.resolved,
         revision: registration.revision,
         ...base === undefined ? {} : { base },
         ...detachedUser === undefined ? {} : { user: detachedUser },
         applies: registration.applies,
       }
-      if (options?.redactSecrets !== true) return descriptor
+      if (!forWire) return descriptor
       const schema = registration.schema as z<never>
       const redacted = redactSecrets(schema, registration.resolved)
       return {
@@ -632,15 +688,33 @@ export abstract class SettingsProvider extends Service {
           : (snapshot['ops'] as SettingsPathOp[]).reduce(applyPathOp, current)
       const next = deepFreeze(this.resolve(registration.schema, registration.base, section, registration.validate))
       await this.persist(ns, section)
-      // The write reached storage either way; the cache must say so. Commit
-      // only when this registration is still the namespace owner — a fiber
-      // disposed (or replaced) mid-persist must not receive the notification.
+      // The write reached storage either way; the cache must say so. A
+      // replacement that registered while persistence was in flight must be
+      // resolved from the committed section rather than retaining the old
+      // document snapshot it observed at registration.
+      let committedBefore: Record<string, unknown> | undefined
+      try {
+        committedBefore = this.section(ns)
+      } catch {
+        // A provider reconciliation may have published a malformed section
+        // while persistence was in flight; the committed valid section below
+        // still advances from an unreadable predecessor.
+        committedBefore = undefined
+      }
       this.document[ns] = section
-      // TODO(settings-replacement-resync): Re-resolve any replacement registration
-      // from this persisted section so an old in-flight write cannot leave it stale.
-      if (this.registrations.get(ns) === registration && !this.isStopped()) {
-        this.bumpRevision(registration, current, section)
+      const owner = this.registrations.get(ns)
+      if (owner === undefined || this.isStopped()) return
+      this.bumpRevision(owner, committedBefore, section)
+      if (owner === registration) {
         this.commit(registration, next, 'update')
+        return
+      }
+      try {
+        const replacement = deepFreeze(this.resolve(owner.schema, owner.base, section, owner.validate))
+        this.commit(owner, replacement, 'update')
+      } catch (error) {
+        this.ctx.logger.warn('settings: replacement registration "%s" rejected a write committed by its predecessor', ns)
+        this.ctx.logger.warn(error)
       }
     })
     this.writeQueues.set(ns, run)
@@ -670,15 +744,24 @@ export abstract class SettingsProvider extends Service {
     }
     this.document = doc
     for (const registration of this.registrations.values()) {
+      let after: Record<string, unknown> | undefined
+      try {
+        after = this.section(registration.ns)
+      } catch (error) {
+        this.bumpRevision(registration, before.get(registration.ns), undefined)
+        this.ctx.logger.warn('settings: keeping last good "%s" after invalid stored section', registration.ns)
+        this.ctx.logger.warn(error)
+        continue
+      }
+      this.bumpRevision(registration, before.get(registration.ns), after)
       let next: unknown
       try {
-        next = deepFreeze(this.resolve(registration.schema, registration.base, this.section(registration.ns), registration.validate))
+        next = deepFreeze(this.resolve(registration.schema, registration.base, after, registration.validate))
       } catch (error) {
         this.ctx.logger.warn('settings: keeping last good "%s" after invalid stored section', registration.ns)
         this.ctx.logger.warn(error)
         continue
       }
-      this.bumpRevision(registration, before.get(registration.ns), this.section(registration.ns))
       this.commit(registration, next, source)
     }
   }
@@ -827,6 +910,8 @@ function isUnloading(ctx: Context): boolean {
 
 /** Hooks a consumer hands to {@link installSettingsSection}. */
 export interface SettingsSectionHooks<T> {
+  /** Configuration surfaces the registered section intentionally serves. */
+  surfaces?: readonly SettingsSurface[]
   /**
    * Receive the active configuration source: the resolved settings scope
    * while one is attached, the composition entry otherwise. Called before
@@ -870,6 +955,7 @@ export function installSettingsSection<T>(
   ctx.inject(['settings'], (sctx) => {
     const scope = sctx.settings.register(ns, schema, {
       base: entry,
+      ...hooks.surfaces === undefined ? {} : { surfaces: hooks.surfaces },
       ...hooks.validate === undefined ? {} : { validate: hooks.validate },
     })
     hooks.setSource(() => scope.get())

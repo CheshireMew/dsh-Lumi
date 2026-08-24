@@ -14,7 +14,9 @@ JSON backend for the [storage hub](../storage/README.md): one human-readable `<u
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `root` | string | required — no default (a cwd fallback would scatter files) | Directory holding unit files; created `0o700` on demand |
+| `root` | string | required — no default (a cwd fallback would scatter files) | Directory holding unit files; resolved to an absolute path when the backend is constructed and created `0o700` on demand |
+
+The `destroy` primitive removes exactly the closed unit's JSON file and treats an absent file as success. It refuses an open or opening unit; domain recovery policy remains above the backend.
 
 ## Model Experience
 
@@ -35,4 +37,4 @@ None — the backend never touches live request prefixes.
 ## Known Limitations and Deferred Work
 
 - Windows durability relies on libuv's `rename()` (`MoveFileExW` with replacement) without an explicit write-through flag; the session-log backend's stricter Win32 write-through publish helper is planned to move down here when the append-log facet lands (see the Agent Note's migration section).
-- No cross-process write locking: two processes writing the same root can interleave whole-file replacements (last write wins). Single-host-process deployments are the current consumer; the multi-process story is deferred per the Agent Note's out-of-scope table.
+- No backend-level cross-process write locking: two direct embedders writing the same root can interleave whole-file replacements (last write wins). The shipped `dsh` profile launcher prevents a second Host from using the same canonical `$DSH_HOME`; direct embeddings and bespoke storage roots must arrange one writer themselves.

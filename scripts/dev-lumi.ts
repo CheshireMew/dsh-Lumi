@@ -9,7 +9,6 @@ const electron = process.platform === 'win32'
   : resolve(root, 'node_modules', '.bin', 'electron')
 const environment = {
   ...process.env,
-  ELECTRON_CACHE: process.env.ELECTRON_CACHE ?? (process.platform === 'win32' ? 'D:\\Tools\\electron-cache' : undefined),
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1',
 }
 

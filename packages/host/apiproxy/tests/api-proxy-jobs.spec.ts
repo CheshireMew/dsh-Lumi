@@ -16,8 +16,8 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
 import type { JobOutcome } from '@deepseek-ai/dsh-jobs'
-import type { MuxFrame, RpcRequest } from '@deepseek-ai/dsh-host-apiproxy/api'
-import { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
+import type { MuxFrame, RpcRequest } from '@deepseek-ai/dsh-api-protocol/api'
+import { RpcId } from '@deepseek-ai/dsh-api-protocol/api/rpc'
 import { createApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 
 type JobFrame = Extract<MuxFrame, { type: 'session/jobs' }>

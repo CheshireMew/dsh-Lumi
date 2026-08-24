@@ -22,7 +22,7 @@ import {
 } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionEvent, SurfaceEventType, SessionId, SessionHeader, SessionPreparation } from '@deepseek-ai/dsh-session'
 import {
-  type JournalMode, openDatabase, rowToMeta, scanRows, type EventRow, type SessionRow,
+  type JournalMode, openDatabase, rowToLastPromptAt, rowToMeta, scanRows, type EventRow, type SessionRow,
 } from './schema.ts'
 
 export { SCHEMA_VERSION } from './schema.ts'
@@ -182,6 +182,10 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
     return this.coordinator.append(id, events)
   }
 
+  delete(id: SessionId, signal?: AbortSignal): Promise<void> {
+    return this.coordinator.delete(id, signal)
+  }
+
   override prepare(id: SessionId, signal?: AbortSignal): Promise<SessionPreparation> {
     return this.coordinator.prepare(id, signal)
   }
@@ -281,19 +285,26 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
    * atomicity + durability boundary, so a mid-batch failure (a UNIQUE violation
    * on a duplicated seq) leaves the stored log untouched.
    */
-  async appendBatch(meta: SessionHeader, events: readonly SessionEvent[], isMaterialized: boolean): Promise<void> {
+  async appendBatch(
+    meta: SessionHeader,
+    events: readonly SessionEvent[],
+    isMaterialized: boolean,
+    lastPromptAt: number | null,
+  ): Promise<void> {
     await this.ready
     const insertEvent = this.db.prepare(
       'INSERT INTO events (session_id, seq, type, time, data, source_event_seqs, surface_op, ignorable) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     )
     this.db.exec('BEGIN')
     try {
-      if (!isMaterialized) this.writeRow(meta)
+      if (!isMaterialized) this.writeRow(meta, lastPromptAt)
       for (const event of events) {
         const [surfaceSeqs, surfaceOp, ignorable] = envelopeBindings(event)
         insertEvent.run(meta.id, event.seq, event.type, event.time, JSON.stringify(event.data), surfaceSeqs, surfaceOp, ignorable)
       }
-      this.db.prepare('UPDATE sessions SET revision = revision + 1 WHERE id = ?').run(meta.id)
+      this.db.prepare(
+        'UPDATE sessions SET revision = revision + 1, last_prompt_at = ? WHERE id = ?',
+      ).run(lastPromptAt, meta.id)
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
@@ -306,7 +317,12 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
    * `tornMarker`) and INSERT the synthetic `closers`. After COMMIT the stored rows
    * == the balanced log.
    */
-  async commitRepair(meta: SessionHeader, tornMarker: number | undefined, closers: readonly SessionEvent[]): Promise<void> {
+  async commitRepair(
+    meta: SessionHeader,
+    tornMarker: number | undefined,
+    closers: readonly SessionEvent[],
+    lastPromptAt: number | null = null,
+  ): Promise<void> {
     await this.ready
     this.db.exec('BEGIN')
     try {
@@ -323,7 +339,9 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
         }
       }
       if (tornMarker !== undefined || closers.length > 0) {
-        this.db.prepare('UPDATE sessions SET revision = revision + 1 WHERE id = ?').run(meta.id)
+        this.db.prepare(
+          'UPDATE sessions SET revision = revision + 1, last_prompt_at = ? WHERE id = ?',
+        ).run(lastPromptAt, meta.id)
       }
       this.db.exec('COMMIT')
     } catch (error) {
@@ -334,6 +352,22 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
       this.db.exec('ROLLBACK')
       throw error
       /* v8 ignore stop */
+    }
+  }
+
+  /** Delete one session row and its cascading event rows in one transaction. */
+  async deleteStored(id: SessionId, signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted()
+    await this.ready
+    signal?.throwIfAborted()
+    this.db.exec('BEGIN')
+    try {
+      const result = this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id)
+      this.db.exec('COMMIT')
+      return result.changes === 1
+    } catch (error: unknown) {
+      this.db.exec('ROLLBACK')
+      throw error
     }
   }
 
@@ -358,6 +392,7 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
     signal?.throwIfAborted()
     return rows.map(row => ({
       header: rowToMeta(row),
+      lastPromptAt: rowToLastPromptAt(row),
       revision: SessionPersistenceRevision(
         `${this.storeIdentity}:incarnation:${row.incarnation}:revision:${row.revision}`,
       ),
@@ -382,11 +417,11 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
    * materializing `appendBatch`, so writing the row IS the materialization (its
    * existence is the signal `list` reads).
    */
-  private writeRow(meta: SessionHeader): void {
+  private writeRow(meta: SessionHeader, lastPromptAt: number | null): void {
     this.db.prepare(`
       INSERT INTO sessions
-        (id, version, created_at, cwd, parent_session, seed_length, origin, delegation_depth, agent_preset, incarnation, revision)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        (id, version, created_at, cwd, parent_session, seed_length, origin, delegation_depth, agent_preset, last_prompt_at, incarnation, revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
       ON CONFLICT(id) DO UPDATE SET
         version = excluded.version,
         created_at = excluded.created_at,
@@ -395,7 +430,8 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
         seed_length = excluded.seed_length,
         origin = excluded.origin,
         delegation_depth = excluded.delegation_depth,
-        agent_preset = excluded.agent_preset
+        agent_preset = excluded.agent_preset,
+        last_prompt_at = excluded.last_prompt_at
     `).run(
       meta.id,
       meta.version,
@@ -406,6 +442,7 @@ export class SqliteSessionPersistence extends SessionPersistence implements Pers
       meta.origin ?? null,
       meta.delegationDepth ?? null,
       meta.agentPreset ?? null,
+      lastPromptAt,
       randomUUID(),
     )
   }

@@ -221,7 +221,7 @@ Provider configuration resolves before route registration into an immutable disc
 
 ## `AppIdentity` — app attribution
 
-The static public application identity every adapter sends to providers ([`packages/llm/llm/src/attribution.ts`](../../packages/llm/llm/src/attribution.ts)). `attributionHeaders(identity?)` maps it to the standard `User-Agent` header only; OpenRouter-specific app attribution headers are intentionally not supported by this contract. The default `APP_IDENTITY` sources its version from the package manifest; every field is a public product fact - no secrets, paths, session ids, or per-user identifiers, and nothing per-request may influence the values. Rationale: [Mandatory `User-Agent` attribution](../../.agents/notes/implemented/architecture/2026-06-21-mandatory-app-attribution-headers.md).
+The static public application identity every adapter sends to providers ([`packages/llm/llm/src/attribution.ts`](../../packages/llm/llm/src/attribution.ts)). `attributionHeaders(identity?)` maps it to the standard `User-Agent` header only; OpenRouter-specific app attribution headers are intentionally not supported by this contract. The default `APP_IDENTITY` uses the shared product identity whose version comes from package metadata; every field is a public product fact - no secrets, paths, session ids, or per-user identifiers, and nothing per-request may influence the values. Rationale: [Mandatory `User-Agent` attribution](../../.agents/notes/implemented/architecture/2026-06-21-mandatory-app-attribution-headers.md).
 
 ```ts type-equiv
 /**
@@ -231,14 +231,7 @@ The static public application identity every adapter sends to providers ([`packa
  * local paths, session ids, prompt text, or per-user identifiers belong here,
  * and nothing per-request may influence the values.
  */
-interface AppIdentity {
-  /** `User-Agent` product token (lowercase, hyphenated). */
-  product: string
-  /** Product version; sourced from package metadata, never hand-copied. */
-  version: string
-  /** Repository home URL of the app, used as the `User-Agent` comment. */
-  url: string
-}
+type AppIdentity = ProductIdentity
 ```
 
 ## `TokenUsage`

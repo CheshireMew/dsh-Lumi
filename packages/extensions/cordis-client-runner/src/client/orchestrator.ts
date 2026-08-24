@@ -71,6 +71,7 @@ export interface CordisRunHostSeam {
   ): Promise<DynamicCordisClientSource>
   /** Settle a model-driven approval. */
   resolveRequestRun(
+    pluginId: CordisDynamicPluginId,
     requestId: ApprovalRequestId,
     resolution: DynamicCordisRunResolution,
   ): Promise<DynamicCordisResolveAck>
@@ -287,7 +288,7 @@ export class CordisRunOrchestrator {
     this.requests.delete(requestId)
     this.activity.delete(request.pluginId)
     this.commit()
-    await this.answer(requestId, { ok: false, reason: 'rejected' })
+    await this.answer(request.pluginId, requestId, { ok: false, reason: 'rejected' })
   }
 
   /**
@@ -335,7 +336,7 @@ export class CordisRunOrchestrator {
     if (!started.ok) {
       this.fail(plan, 'host-half-failed', started)
       if (plan.requestId !== undefined) {
-        await this.answer(plan.requestId, { ...started, reason: 'host-half-failed' })
+        await this.answer(plan.pluginId, plan.requestId, { ...started, reason: 'host-half-failed' })
       }
       return
     }
@@ -375,7 +376,7 @@ export class CordisRunOrchestrator {
       ...loaded.waitingFor === undefined ? {} : { waitingFor: loaded.waitingFor },
     }
     if (plan.requestId !== undefined) {
-      await this.answer(plan.requestId, resolution)
+      await this.answer(plan.pluginId, plan.requestId, resolution)
       return
     }
     await this.settleDirect(plan, resolution)
@@ -415,7 +416,7 @@ export class CordisRunOrchestrator {
       startedHere,
       ...failure,
     }
-    if (plan.requestId !== undefined) await this.answer(plan.requestId, resolution)
+    if (plan.requestId !== undefined) await this.answer(plan.pluginId, plan.requestId, resolution)
     else await this.settleDirect(plan, resolution)
   }
 
@@ -428,9 +429,16 @@ export class CordisRunOrchestrator {
     }
   }
 
-  private async answer(requestId: ApprovalRequestId, resolution: DynamicCordisRunResolution): Promise<void> {
+  private async answer(
+    pluginId: CordisDynamicPluginId,
+    requestId: ApprovalRequestId,
+    resolution: DynamicCordisRunResolution,
+  ): Promise<void> {
     try {
-      await this.env.host.resolveRequestRun(requestId, resolution)
+      const acknowledgement = await this.env.host.resolveRequestRun(pluginId, requestId, resolution)
+      if (!acknowledgement.accepted && acknowledgement.retract && resolution.pluginRunId !== undefined) {
+        await this.env.runner.retract(pluginId, resolution.pluginRunId)
+      }
     } catch (error) {
       console.error(`[cordis-client-runner] answering run request ${requestId} failed:`, error)
     }

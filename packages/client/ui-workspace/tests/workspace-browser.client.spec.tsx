@@ -76,6 +76,8 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     renameWorkspace: vi.fn(async () => {}),
     deleteWorkspace: vi.fn(async () => {}),
     archiveSession: vi.fn(async () => {}),
+    unarchiveSession: vi.fn(async () => {}),
+    deleteSession: vi.fn(async () => []),
     insertWorkspaceBefore: vi.fn(async () => {}),
     insertSessionBefore: vi.fn(async () => {}),
     createWorkspace: vi.fn(async () => workspace('created', [])),
@@ -314,7 +316,7 @@ describe('WorkspaceBrowser', () => {
     expect(screen.getAllByRole('treeitem').slice(1)[0]?.textContent).toContain('two')
   })
 
-  it('archives a session from the row menu and hides archived rows in both modes', async () => {
+  it('archives a session from the row menu and moves it to the archive section', async () => {
     const archiveSession = vi.fn(async () => {})
     const b = mount({
       useSessions: hook(sessionState([summary('kept-s', 2), summary('gone-s', 1)])),
@@ -326,13 +328,67 @@ describe('WorkspaceBrowser', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '归档会话' }))
     expect(archiveSession).toHaveBeenCalledWith(sid('gone-s'))
 
-    // The archive-set echo hides the row in grouped and flat modes.
+    // The archive-set echo moves the row out of its Workspace and into the
+    // dedicated archive group; flat mode keeps the same restore surface.
     rerender(b, { useWorkspaces: hook(workspaceState([workspace('alpha', ['kept-s', 'gone-s'])], [sid('gone-s')])) })
-    expect(screen.queryByText('gone-s')).toBeNull()
+    expect(screen.getByText('已归档')).toBeTruthy()
+    fireEvent.click(screen.getByText('已归档'))
+    expect(screen.getByText('gone-s')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '单列表' }))
     expect(screen.getByText('kept-s')).toBeTruthy()
-    expect(screen.queryByText('gone-s')).toBeNull()
+    expect(screen.getByText('gone-s')).toBeTruthy()
+  })
+
+  it('restores an archived session from its dedicated group', () => {
+    const unarchiveSession = vi.fn(async () => {})
+    mount({
+      useSessions: hook(sessionState([summary('archived-s', 1)])),
+      useWorkspaces: hook(workspaceState([], [sid('archived-s')])),
+      unarchiveSession,
+    })
+    fireEvent.click(screen.getByText('已归档'))
+    fireEvent.click(screen.getByRole('button', { name: '会话“archived-s”的操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '恢复会话' }))
+
+    expect(unarchiveSession).toHaveBeenCalledWith(sid('archived-s'))
+  })
+
+  it('requires explicit confirmation and recursively deletes the selected session tree', async () => {
+    const deleteSession = vi.fn(async () => [sid('delete-s')])
+    mount({
+      useSessions: hook(sessionState([summary('delete-s', 1)])),
+      useWorkspaces: hook(workspaceState([])),
+      deleteSession,
+    })
+    fireEvent.click(screen.getByText('未分组'))
+    fireEvent.click(screen.getByRole('button', { name: '会话“delete-s”的操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '永久删除会话' }))
+
+    expect(screen.getByText('将永久删除“delete-s”及其所有子会话的记录。此操作无法撤销。')).toBeTruthy()
+    expect(deleteSession).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '永久删除会话' }))
+
+    await waitFor(() => {
+      expect(deleteSession).toHaveBeenCalledWith(sid('delete-s'), true)
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+  })
+
+  it('keeps permanent-deletion confirmation open when the host rejects it', async () => {
+    const deleteSession = vi.fn(async () => { throw new Error('session is still running') })
+    mount({
+      useSessions: hook(sessionState([summary('running-s', 1)])),
+      useWorkspaces: hook(workspaceState([])),
+      deleteSession,
+    })
+    fireEvent.click(screen.getByText('未分组'))
+    fireEvent.click(screen.getByRole('button', { name: '会话“running-s”的操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '永久删除会话' }))
+    fireEvent.click(screen.getByRole('button', { name: '永久删除会话' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('session is still running')
+    expect(screen.getByRole('dialog')).toBeTruthy()
   })
 
   it('logs and keeps the tree when the archive call rejects', async () => {

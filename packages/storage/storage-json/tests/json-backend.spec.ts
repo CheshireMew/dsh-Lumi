@@ -54,6 +54,22 @@ describe('json backend specifics', () => {
     await backend.close()
   })
 
+  it('resolves a relative root once when the backend is constructed', async () => {
+    const base = await freshRoot()
+    const previous = process.cwd()
+    let backend: JsonStorageBackend
+    try {
+      process.chdir(base)
+      backend = new JsonStorageBackend('relative-store')
+    } finally {
+      process.chdir(previous)
+    }
+    const unit = await backend.kv.open(descriptor)
+    await unit.putRecord('t', 'k', { stable: true })
+    await expect(readFile(join(base, 'relative-store', 'shape.json'), 'utf8')).resolves.toContain('stable')
+    await backend.close()
+  })
+
   it('rejects a malformed medium', async () => {
     const root = await freshRoot()
     await writeFile(join(root, 'shape.json'), 'not json at all', 'utf8')

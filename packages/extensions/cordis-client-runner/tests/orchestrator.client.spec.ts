@@ -46,6 +46,7 @@ interface Bench {
     settleUserRun: ReturnType<typeof vi.fn>
   }
   load: ReturnType<typeof vi.fn>
+  retract: ReturnType<typeof vi.fn>
   /** Resolutions the host received, in order. */
   answers: unknown[]
 }
@@ -62,7 +63,7 @@ function boot(overrides: {
     getClientCode: vi.fn(overrides.clientCode ?? (() => Promise.resolve({
       code: 'return {}', name: 'demo', pluginId: PLUGIN, packageId: PACKAGE, pluginRunId: RUN,
     }))),
-    resolveRequestRun: vi.fn((_requestId: unknown, resolution: unknown) => {
+    resolveRequestRun: vi.fn((_pluginId: unknown, _requestId: unknown, resolution: unknown) => {
       answers.push(resolution)
       return (overrides.resolve ?? (() => Promise.resolve({ accepted: true })))()
     }),
@@ -78,11 +79,12 @@ function boot(overrides: {
       })),
   }
   const load = vi.fn(overrides.loaded ?? (() => Promise.resolve({ ok: true as const, pluginRunId: RUN })))
+  const retract = vi.fn(() => Promise.resolve())
   const orchestrator = new CordisRunOrchestrator({
-    runner: { load } as unknown as DynamicCordisPackageRunner,
+    runner: { load, retract } as unknown as DynamicCordisPackageRunner,
     host,
   })
-  return { orchestrator, host, load, answers }
+  return { orchestrator, host, load, retract, answers }
 }
 
 /** Register one request the way the `cordis/request-run` event does. */
@@ -326,6 +328,36 @@ describe('approve', () => {
     logged.mockRestore()
     expect(complaints).toHaveLength(1)
     expect(bench.orchestrator.activeRuns.getSnapshot().size).toBe(0)
+  })
+
+  it('unloads a Client activation that the Host identifies as superseded', async () => {
+    const bench = boot({
+      resolve: () => Promise.resolve({
+        accepted: false,
+        reason: 'activation-superseded',
+        retract: true,
+      }),
+    })
+    ask(bench)
+
+    await bench.orchestrator.approve(REQ, false)
+
+    expect(bench.retract).toHaveBeenCalledWith(PLUGIN, RUN)
+  })
+
+  it('keeps a live Client activation when another page already settled the request', async () => {
+    const bench = boot({
+      resolve: () => Promise.resolve({
+        accepted: false,
+        reason: 'request-settled',
+        retract: false,
+      }),
+    })
+    ask(bench)
+
+    await bench.orchestrator.approve(REQ, false)
+
+    expect(bench.retract).not.toHaveBeenCalled()
   })
 
   it('clears a previous failure when the same definition is tried again', async () => {

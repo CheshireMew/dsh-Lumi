@@ -40,6 +40,17 @@ export interface KvFacet {
    * @returns the opened unit.
    */
   open(descriptor: KvUnitDescriptor): Promise<KvUnit>
+
+  /**
+   * Remove one closed unit's complete durable medium. Missing units are a
+   * no-op. The descriptor is validated exactly as for {@link open}; calling
+   * this while the same unit is open or opening is a caller bug and rejects.
+   * This is a storage primitive, not recovery policy: callers decide whether
+   * a domain is disposable before invoking it.
+   * @param descriptor - Static identity and shape of the unit to remove.
+   * @returns resolution after the unit is durably absent.
+   */
+  destroy(descriptor: KvUnitDescriptor): Promise<void>
 }
 
 /** Static identity and shape of one KV unit, projected from its owner's spec. */

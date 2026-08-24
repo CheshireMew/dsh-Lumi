@@ -1,25 +1,25 @@
 # Agent Note: Storage root placement and derived-medium recovery
 
-Status: proposed
+Status: implemented
 
 English | [中文](2026-07-28-storage-root-and-derived-medium-recovery.zh.md)
 
 ## Problem
 
-The persisted projection cache ([note](2026-07-27-session-projection-and-command-log.md), shipped as `dsh-session-projection-cache`) surfaced two gaps in the storage substrate it landed on. Both are properties of the domain-KV stack ([design](2026-07-24-domain-kv-storage-and-workspace.md)), not of the cache itself, and both bite the cache first because it is the first *derived* medium on that stack.
+The persisted projection cache ([note](../../proposed/architecture/2026-07-27-session-projection-and-command-log.md), shipped as `dsh-session-projection-cache`) surfaced two gaps in the storage substrate it landed on. Both are properties of the domain-KV stack ([design](../../proposed/architecture/2026-07-24-domain-kv-storage-and-workspace.md)), not of the cache itself, and both bite the cache first because it is the first *derived* medium on that stack.
 
-**Where the files actually live (root mismatch closed; resolve-once residual still open).** The shared base defaults the session store to the global harness home (`$DSH_HOME/sessions`, default `~/.dsh/sessions`), while the shipped Web overlay used to give the json backend the relative root `./.storages`: `workspace.json` and `session_projcache.json` landed under `<launch dir>/.storages/` — two launches from different directories shared their sessions yet saw different workspace registries and different projection caches, and the cache exists precisely to serve the cross-session cold listing, which missed for every session last cached under another launch directory. That mismatch is now closed: the overlay anchors `storage-json.root` to `$DSH_HOME/storages` with the same `!!js` expression the session root uses (`apps/cli/config/web.cordis.yml`). The residual hazard: `JsonStorageBackend` still never resolves its root — each unit open joins the path against whatever `process.cwd()` is at that moment (packages/storage/storage-json/src/index.ts); the shipped overlay root is already absolute and unaffected, but any relative root (bare Loader boots, tests) still splits on a later cwd change — the exact hazard the JSONL session backend resolves-once to prevent ("later process.cwd() changes cannot split one backend across roots", packages/session/session-persistence-jsonl/src/index.ts).
+**Where the files live.** The shared base defaults the session store to the global harness home (`$DSH_HOME/sessions`, default `~/.dsh/sessions`), and the shipped Web overlay anchors `storage-json.root` to `$DSH_HOME/storages` with the same `!!js` expression (`apps/cli/config/web.cordis.yml`). `JsonStorageBackend` resolves that configured root once at construction, so a later `process.cwd()` change cannot split one backend across directories. Sessions, workspace records, and projection checkpoints therefore keep one stable home across launch directories.
 
-**How recovery works today.** Inside a healthy medium the cache is fully self-healing by design: a `stateVersion`-mismatched row is discarded and refolded, a log shrunk below a row's watermark is detected by the anchored restore floor and answered with one full re-read, and every background write is fail-soft. But at the *medium* level there is no recovery at all: a truncated, hand-edited, or version-bumped `session_projcache.json` fails `openJsonUnit` with `malformed-medium`/`version-mismatch` (packages/storage/storage-json/src/format.ts), a schema-drifted record fails domain open with `invalid-record` (packages/storage/storage-domain/src/index.ts), the rejection propagates through `SessionProjectionCache[Service.init]`, and under the CLI's fail-loud boot the assembly refuses to start. A file whose entire content is rebuildable from session logs can brick boot. This contradicts the cache package's own stated stance ("a stale or unreadable cache costs a longer tail replay, never a wrong value") and the cache domain spec's JSDoc ("version bumps discard the whole medium"), which today describes an aspiration, not the implementation. The same fail-loud path is *correct* for `workspace.json` — workspace records are authoritative, not derivable — so the missing concept is a per-domain declaration of authority, not a global behavior change.
+**How recovery works.** Inside a healthy medium the cache remains self-healing: a `stateVersion`-mismatched row is discarded and refolded, a log shrunk below a row's watermark triggers one full re-read, and background writes are fail-soft. At the medium level, `session_projcache` declares itself disposable. A truncated, hand-edited, version-bumped, or schema-invalid cache unit is removed and reopened once, while the same damage in the authoritative `workspace` and `message_feedback` domains still fails startup. Ordinary I/O and configuration failures also stay loud.
 
-## Proposal
+## Decision
 
 Two independent changes, one per gap.
 
-### One global storage root (shipped, amended form); resolved once at construction (still open)
+### One global storage root, resolved once at construction
 
-- **Shipped**: the Web overlay anchors `storage-json.root` to `$DSH_HOME/storages` directly in the row through the app-boot-provided `dshHomePath('storages')` (`~/.dsh/storages` by default, beside `~/.dsh/sessions`; no leading dot — the home is already a hidden tree). The helper delegates to the canonical `dsh-home-paths` resolver, and the session root uses the same function without duplicating its fallback and tilde rules. The per-row form was chosen (user decision) over a launcher patch + `storageRoot` profile key (see Alternatives); per-row overrides ride the personal `~/.dsh/config.yaml` patch layer. The web e2e scaffold already patches the row to an absolute temp root, so tests never touch the user's home.
-- **Still open**: `JsonStorageBackend` resolves its configured root once at construction (`resolve(config.root)`), adopting the JSONL backend's recorded rationale verbatim: a later `process.cwd()` change must not split one backend across roots. The SQLite storage backend already resolves its path.
+- The Web overlay anchors `storage-json.root` to `$DSH_HOME/storages` directly in the row through the app-boot-provided `dshHomePath('storages')` (`~/.dsh/storages` by default, beside `~/.dsh/sessions`; no leading dot because the home is already a hidden tree). The helper delegates to the canonical `dsh-home-paths` resolver, and the session root uses the same function without duplicating its fallback and tilde rules. Per-row overrides use the personal `~/.dsh/config.yaml` patch layer. The web e2e scaffold patches the row to an absolute temporary root, so tests never touch the user's home.
+- `JsonStorageBackend` resolves its configured root once at construction (`resolve(config.root)`). A later `process.cwd()` change cannot split one backend across roots. The SQLite storage backend already resolves its path.
 - Pre-release stance applies (and was executed): no migration shim. A deployment that cached under `<cwd>/.storages` re-derives everything (workspace re-bootstraps from the header index; the projection cache refolds lazily) or moves the two json files by hand once.
 
 ### Declared derived media: reset instead of reject
@@ -45,12 +45,18 @@ Two independent changes, one per gap.
 
 **A blanket auto-reset for every domain (no spec field)** — rejected outright: `workspace.json` is authoritative user data; silently resetting it on a version bump would destroy workspaces. Authority is a property of the domain and must be declared by its owner.
 
-## Acceptance criteria
+## Verification
 
-- `dsh` launched from any directory reads and writes the same `$DSH_HOME/storages/*.json` (default `~/.dsh/storages`) — already satisfied by the overlay expression; per-row overrides ride the personal config.yaml patch layer; the backend resolves a relative root once at construction (still to do).
+- `dsh` launched from any directory reads and writes the same `$DSH_HOME/storages/*.json` (default `~/.dsh/storages`); per-row overrides ride the personal config.yaml patch layer, and the JSON backend's relative-root regression test proves construction-time resolution.
 - With a truncated, version-bumped, or schema-drifted `session_projcache.json`, the assembly boots clean: one warning names the discarded medium, the file is gone, the cache rebuilds through normal operation, and the cold listing column reappears as sessions are re-checkpointed.
 - The same damage to `workspace.json` still fails boot loudly.
-- Facility tests cover: each damage class resets a `'reset'` domain exactly once; non-damage failures stay loud on a `'reset'` domain; a `'reject'` domain propagates every failure; `destroy` removes the medium on both shipped backends.
+- Facility tests cover every damage class, single-shot retry, non-damage propagation, and the authoritative default. The shared backend contract proves that `destroy` refuses live units, is idempotent for an absent unit, and removes records plus the global value on both shipped backends.
+
+## Consequences
+
+- Derived-domain startup no longer depends on preserving a rebuildable cache file. Recovery can increase the next cold-read cost, but it cannot substitute cached state for the session log.
+- Every KV backend implements the same closed-unit `destroy` primitive. Adding a backend now includes the shared destruction conformance case as part of its acceptance path.
+- Relative JSON roots have construction-time meaning. Changing `process.cwd()` later affects neither existing units nor units first opened after the change.
 
 ## Risks
 

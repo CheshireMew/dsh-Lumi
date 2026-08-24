@@ -12,6 +12,8 @@
 
 `web` 和 `headless` profile 首次使用时会从随附模板自动初始化（`web`：base + web-app；`headless`：base + headless）。其他缺失的 profile 会显式报错，并提示运行 `dsh plugin --profile <name> add <package>`。
 
+启动器会在组合或初始化 profile、修复后备链接、读取 home 配置之前，先取得规范化 `$DSH_HOME` 的独占 Host 所有权。使用同一 home 的另一个 profile 启动会以非零状态退出，并报告当前占用者的 PID、profile 和启动时间；不同 home 可以并行运行。进程崩溃后，操作系统会自动释放所有权；正常关闭和显式失败关闭则会在插件树完成 dispose 后释放。Host 仍在运行时一旦丢失所有权端点，进程会按致命故障关闭。插件管理和配置 dump 不挂载 Host，也不取得所有权。
+
 ### 应用参数
 
 启动器自身的 flag 必须写在最前面，并在遇到第一个无法识别的 token 时结束；从该 token 开始的所有内容都会通过 `ctx.cmdlineArgs` 原样交给已启动的 profile，注入该 profile 的任意应用插件都可以解析这些内容（[`dsh-cmdline`](../../../packages/boot/cmdline/README.md)）。因此，`dsh --profile web --port 8080` 会将 `--port` 交给 web 应用；`dsh --profile web --help` 只打印该应用的帮助信息，不启动应用；`dsh --help` 没有可供交付参数的 profile，因此会打印启动器自身的帮助信息。`-V`/`--version` 位于应用参数边界之前时，会打印启动器的版本。

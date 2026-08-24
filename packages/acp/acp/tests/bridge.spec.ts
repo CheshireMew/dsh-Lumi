@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
+import { PRODUCT_VERSION } from '@deepseek-ai/dsh-product-identity'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { makeBridgeHarness, textResponse, type BridgeHarness } from './harness.ts'
 
@@ -20,7 +21,7 @@ describe('automation-only ACP bridge', () => {
 
     expect(response).toEqual({
       protocolVersion: PROTOCOL_VERSION,
-      agentInfo: { name: 'deepseek-harness-acp', version: '0.0.1' },
+      agentInfo: { name: 'deepseek-harness-acp', version: PRODUCT_VERSION },
       agentCapabilities: {
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
       },

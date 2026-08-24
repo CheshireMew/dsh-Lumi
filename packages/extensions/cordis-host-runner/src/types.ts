@@ -91,7 +91,7 @@ export interface CordisInspectResolveAck {
 export type CordisDynamicRunMode = 'run' | 'update'
 
 /** How a model-driven Client activation request left the pending state. */
-export type RequestRunOutcome = 'approved' | 'completed' | 'rejected' | 'cancelled' | 'failed'
+export type RequestRunOutcome = 'approved' | 'completed' | 'rejected' | 'cancelled' | 'timed-out' | 'failed'
 
 /** Error fields preserved across the Host/Client transport. */
 export interface CordisErrorDetails {
@@ -347,10 +347,15 @@ export type DynamicCordisRunResolution =
   }
 
 /** Whether a Client activation resolution reached the still-pending request. */
-export interface DynamicCordisResolveAck {
-  /** False for late, unknown, or stale answers. */
-  accepted: boolean
-}
+export type DynamicCordisResolveAck =
+  | { accepted: true }
+  | {
+    accepted: false
+    /** Why the answer lost settlement authority. */
+    reason: 'request-settled' | 'activation-superseded'
+    /** Whether this page must unload the activation it just loaded. */
+    retract: boolean
+  }
 
 /** Result of routing one Client call to the active Host half. */
 export type DynamicCordisInvokeResult =

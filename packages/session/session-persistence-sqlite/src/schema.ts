@@ -17,7 +17,7 @@ import type { SessionEvent, SessionId, SessionHeader, SurfaceOp } from '@deepsee
  * layout; orthogonal to a session's own `version` (which versions the EVENT
  * vocabulary, stored per session in the `sessions` row).
  */
-export const SCHEMA_VERSION = 15
+export const SCHEMA_VERSION = 16
 
 /** SQLite application id protecting unrelated databases from persistence writes. */
 export const SESSION_PERSISTENCE_SQLITE_APPLICATION_ID = 0x44534850
@@ -43,6 +43,8 @@ export interface SessionRow {
   revision: number
   delegation_depth: number | null
   agent_preset: string | null
+  /** Exact latest direct human-prompt time in the event rows. */
+  last_prompt_at: number | null
 }
 
 /** An `events` table row: one `SessionEvent` mapped 1:1 (`data` is JSON text). */
@@ -129,6 +131,7 @@ function configureDatabase(db: DatabaseSync, path: string, journalMode: JournalM
         origin           TEXT,
         delegation_depth INTEGER,
         agent_preset    TEXT,
+        last_prompt_at  INTEGER,
         incarnation      TEXT NOT NULL,
         revision         INTEGER NOT NULL
       ) STRICT;
@@ -191,6 +194,19 @@ export function rowToMeta(row: SessionRow): SessionHeader {
     ...row.delegation_depth !== null ? { delegationDepth: row.delegation_depth } : {},
     ...row.agent_preset !== null ? { agentPreset: row.agent_preset } : {},
   }
+}
+
+/**
+ * Validate the durable latest human-prompt time from a Session index row.
+ * @param row - the `sessions` table row.
+ * @returns the stored timestamp, or `null` before the first human prompt.
+ */
+export function rowToLastPromptAt(row: SessionRow): number | null {
+  if (row.last_prompt_at === null) return null
+  if (!Number.isSafeInteger(row.last_prompt_at) || row.last_prompt_at < 0) {
+    throw new Error('stored session lastPromptAt must be a non-negative safe integer or null')
+  }
+  return row.last_prompt_at
 }
 
 /**

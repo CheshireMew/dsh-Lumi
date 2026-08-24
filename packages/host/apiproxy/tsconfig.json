@@ -9,6 +9,9 @@
   ],
   "references": [
     {
+      "path": "../../api/protocol"
+    },
+    {
       "path": "../../goal/goal"
     },
     {
@@ -100,6 +103,9 @@
     },
     {
       "path": "../../util/native-command"
+    },
+    {
+      "path": "../../util/product-identity"
     }
   ]
 }

@@ -68,6 +68,27 @@ describe('MessageFeedbackService public contract', () => {
     await expect(ctx.messageFeedback.list({ sessionId: fixture.session.id })).rejects.toBe(corruption)
   })
 
+  it('removes its derived row after authoritative Session deletion', async () => {
+    const { ctx, persistence } = await harness()
+    const fixture = messageFixture('feedback-deleted')
+    persistence.persist(fixture.session)
+    expectItem(await ctx.messageFeedback.put({
+      sessionId: fixture.session.id,
+      messageId: fixture.assistantMessageIds[0],
+      rating: 'positive',
+      ifVersion: null,
+    }))
+    const service = ctx.messageFeedback as unknown as {
+      table: { get(id: SessionId): unknown }
+    }
+    expect(service.table.get(fixture.session.id)).toBeDefined()
+
+    persistence.durable.delete(fixture.session.id)
+    ctx.emit('session-persistence/deleted', fixture.session.id)
+
+    await vi.waitFor(() => { expect(service.table.get(fixture.session.id)).toBeUndefined() })
+  })
+
   it('rechecks live ownership before returning a cold catalog miss', async () => {
     const { ctx, persistence } = await harness()
     const sessionId = SessionId('catalog-live-race')
@@ -257,7 +278,11 @@ describe('MessageFeedbackService public contract', () => {
     const rawCtx = new Context()
     rawCtx.provide('sessions', { get: () => undefined } as never)
     rawCtx.provide('sessionPersistence', {
-      listSnapshots: () => Promise.resolve([{ header: fixture.session.header, revision: 'test' }]),
+      listSnapshots: () => Promise.resolve([{
+        header: fixture.session.header,
+        lastPromptAt: null,
+        revision: 'test',
+      }]),
       inspect: () => Promise.resolve({ meta: fixture.session.header, events: fixture.session.events }),
     } as never)
     const raw = new MessageFeedbackService(rawCtx, { maxNoteBytes: 1 })

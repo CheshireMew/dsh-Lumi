@@ -92,6 +92,78 @@ describe('list lifecycle', () => {
     expect(snapshot.items.map(i => i.sessionId)).toEqual([S2, S1])
   })
 
+  it('hydrates every continuation page before publishing one complete baseline', async () => {
+    const api = new FakeApiClient()
+    api.onList = (payload) => {
+      const cursor = (payload as { cursor?: string }).cursor
+      return Promise.resolve(cursor === undefined
+        ? ok({ items: [summary(S2, { updatedAt: 200 })] as never[], nextCursor: 'page-2' })
+        : ok({ items: [summary(S1)] as never[] }))
+    }
+    const manager = new SessionManager(api, fakeRemote())
+
+    await manager.refreshList()
+
+    expect(api.callsOf('session.list')).toEqual([{}, { cursor: 'page-2' }])
+    expect(manager.getListSnapshot().items.map(item => item.sessionId)).toEqual([S2, S1])
+  })
+
+  it('does not install a partial page sequence when a later page fails', async () => {
+    const api = new FakeApiClient()
+    api.onList = () => Promise.resolve(ok({ items: [summary(S1)] as never[] }))
+    const manager = new SessionManager(api, fakeRemote())
+    await manager.refreshList()
+
+    api.onList = payload => Promise.resolve((payload as { cursor?: string }).cursor === undefined
+      ? ok({ items: [summary(S2)] as never[], nextCursor: 'broken-page' })
+      : err({ code: 'internal', message: 'second page failed', details: {} }))
+    await manager.refreshList()
+
+    expect(manager.getListSnapshot().items.map(item => item.sessionId)).toEqual([S1])
+    expect(manager.getListSnapshot().state).toBe('error')
+  })
+
+  it('restarts one expired snapshot from page one without publishing its partial rows', async () => {
+    const api = new FakeApiClient()
+    let call = 0
+    api.onList = () => {
+      call += 1
+      if (call === 1) return Promise.resolve(ok({ items: [summary(S2)] as never[], nextCursor: 'expired' }))
+      if (call === 2) {
+        return Promise.resolve(err({
+          code: 'session-list-cursor-stale',
+          message: 'expired',
+          details: {},
+        }))
+      }
+      if (call === 3) return Promise.resolve(ok({ items: [summary(S1)] as never[], nextCursor: 'replacement' }))
+      return Promise.resolve(ok({ items: [summary(S2)] as never[] }))
+    }
+    const manager = new SessionManager(api, fakeRemote())
+
+    await manager.refreshList()
+
+    expect(api.callsOf('session.list')).toEqual([
+      {},
+      { cursor: 'expired' },
+      {},
+      { cursor: 'replacement' },
+    ])
+    expect(manager.getListSnapshot().items.map(item => item.sessionId)).toEqual([S1, S2])
+    expect(manager.getListSnapshot().state).toBe('idle')
+  })
+
+  it('fails a repeated continuation cursor instead of looping forever', async () => {
+    const api = new FakeApiClient()
+    api.onList = () => Promise.resolve(ok({ items: [] as never[], nextCursor: 'same' }))
+    const manager = new SessionManager(api, fakeRemote())
+
+    await manager.refreshList()
+
+    expect(api.callsOf('session.list')).toHaveLength(2)
+    expect(manager.getListSnapshot().state).toBe('error')
+  })
+
   it('replays incremental frames over hydration and never batch-reorders established ids', async () => {
     const api = new FakeApiClient()
     const first = deferred<Awaited<ReturnType<FakeApiClient['onList']>>>()
@@ -260,6 +332,38 @@ describe('list lifecycle', () => {
     // A baseline at or past the row's seq keeps it (nothing phantom to drop).
     frame('subscribed-current', { type: 'session/subscribed', sessionId: S1, lastSeq: 2 })
     expect(manager.getListSnapshot().items[0]?.title).toBe('Durable')
+  })
+})
+
+describe('permanent deletion', () => {
+  it('removes every host-confirmed identity and retires resident state', async () => {
+    const api = new FakeApiClient()
+    api.onList = () => Promise.resolve(ok({ items: [summary(S1), summary(S2)] as never[] }))
+    api.onDelete = () => Promise.resolve(ok({ deletedSessionIds: [S2, S1] }))
+    const manager = new SessionManager(api, fakeRemote())
+    await manager.refreshList()
+    const resident = manager.get(S1)
+
+    const result = await manager.delete(S1, true)
+
+    expect(result).toEqual({ ok: true, value: { deletedSessionIds: [S2, S1] } })
+    expect(api.callsOf('session.delete')).toEqual([{ sessionId: S1, recursive: true }])
+    expect(manager.getListSnapshot().items).toEqual([])
+    expect(resident.getSnapshot().removed).toBe(true)
+  })
+
+  it('applies a host/session-deleted frame even when this client did not initiate deletion', async () => {
+    const api = new FakeApiClient()
+    api.onList = () => Promise.resolve(ok({ items: [summary(S1)] as never[] }))
+    const manager = new SessionManager(api, fakeRemote())
+    await manager.refreshList()
+
+    manager.handleHostEnvelope({
+      rpcId: 'deleted-elsewhere' as never,
+      payload: { type: 'host/session-deleted', sessionId: S1 },
+    })
+
+    expect(manager.getListSnapshot().items).toEqual([])
   })
 })
 

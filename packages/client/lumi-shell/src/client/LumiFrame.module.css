@@ -13,7 +13,7 @@
 }
 
 .frame button:focus-visible {
-  outline: 3px solid #2d63b6;
+  outline: 3px solid var(--dsw-static-deepseek-650);
   outline-offset: 2px;
 }
 

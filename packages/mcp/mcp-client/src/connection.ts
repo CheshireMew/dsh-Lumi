@@ -18,6 +18,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js'
 import type { Context } from '@deepseek-ai/cordis'
+import { PRODUCT_VERSION } from '@deepseek-ai/dsh-product-identity'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { createTransport } from './transport.ts'
 import { syncTools } from './tools.ts'
@@ -236,7 +237,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
    */
   async function connectGeneration(startup: boolean): Promise<void> {
     const generation = new Client(
-      { name: 'dsh-mcp-client', version: '0.0.1' },
+      { name: 'dsh-mcp-client', version: PRODUCT_VERSION },
       { capabilities: {} },
     )
     const closed: PromiseWithResolvers<void> = Promise.withResolvers()

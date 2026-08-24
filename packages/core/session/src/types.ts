@@ -434,3 +434,18 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
     surfaceOp?: SurfaceOp
   } : object)
 }[T]
+
+/**
+ * Advance the latest direct human-prompt time with one event. Injected user
+ * messages do not count: only `user/message` records whose source kind is
+ * `user` represent a human prompt for Session ordering.
+ * @param current - latest matching event time already observed, or `null`.
+ * @param event - next committed Session event.
+ * @returns `event.time` for a direct human prompt; otherwise `current`.
+ */
+export function advanceLastHumanPromptAt(current: number | null, event: SessionEvent): number | null {
+  const data = event.data as { readonly source?: { readonly kind?: unknown } }
+  return event.type === 'user/message' && data.source?.kind === 'user'
+    ? event.time
+    : current
+}

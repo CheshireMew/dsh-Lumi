@@ -11,6 +11,7 @@ A stored row `(key → {ver, seq, val})` is a fold shortcut, never an authority:
 - **Whole-record writes.** Each write replaces the session's full checkpoint (the registry cut is always complete), snapshotted through the lossless-JSON boundary — a unit state violating the plain-JSON contract fails loud.
 - **Records are bound to a log lifecycle, not just an id.** Each record stores the header identity (`createdAt`, `cwd`) it was folded from; every read validates it (the live or stored header is the witness) before accepting a row, so a deleted-then-recreated id or a persistence store swapped under a surviving cache discards the unrelated record instead of seeding phantom values.
 - **The log leads, the cache follows.** A live checkpoint flushes the session's buffered events durably BEFORE the cache row lands, so a crash can leave the cache behind the log (a longer tail replay) but never ahead of it.
+- **Whole-medium damage resets once.** The domain declares `recovery: 'reset'`: an incompatible version, malformed backend medium, or schema-invalid stored record discards only `session_projcache` and reopens it empty. The logs remain authoritative and normal checkpoint/cold-read paths rebuild the cache. I/O and configuration failures still stop startup.
 
 ## Write policy
 

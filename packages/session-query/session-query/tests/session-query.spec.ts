@@ -76,6 +76,11 @@ class TestPersistence extends SessionPersistence {
     return Promise.resolve()
   }
 
+  delete(id: SessionIdType): Promise<void> {
+    TestPersistence.entries.delete(id)
+    return Promise.resolve()
+  }
+
   load(id: SessionIdType): Promise<{ meta: SessionHeader; events: SessionEvent[] }> {
     return this.inspect(id)
   }
@@ -117,6 +122,7 @@ class TestPersistence extends SessionPersistence {
   async listSnapshots() {
     return [...TestPersistence.entries.values()].map(entry => ({
       header: structuredClone(entry.meta),
+      lastPromptAt: null,
       revision: SessionPersistenceRevision(`events:${entry.events.length}`),
     }))
   }

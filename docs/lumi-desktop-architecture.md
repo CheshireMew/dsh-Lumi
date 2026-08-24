@@ -2,7 +2,7 @@
 
 English | [中文](lumi-desktop-architecture.zh.md)
 
-The desktop product is an additive distribution of DeepSeek Harness. It keeps upstream session, plugin, model, tool, settings, and Web UI ownership intact; Electron owns native window concerns, and `@dsh-lumi/*` packages own presentation and character behavior.
+The desktop product is an additive distribution of DeepSeek Harness. Upstream session, plugin, model, tool, settings, and Web UI ownership remains the default; explicit entries in `.upstream-patches.json` may correct shared DSH defects or missing seams without moving Lumi-only responsibility into official packages. Electron owns native window concerns, and `@dsh-lumi/*` packages own presentation and character behavior.
 
 ## Ownership
 
@@ -32,7 +32,7 @@ The sandboxed preload exposes only window controls, window-state observation, Ha
 
 ## Persistent data
 
-The desktop and CLI resolve the same `$DSH_HOME`. The desktop app adds `$DSH_HOME/lumi/packs`, `$DSH_HOME/logs/lumi-desktop`, and `$DSH_HOME/crashes/lumi-desktop`; it does not copy sessions, profiles, credentials, or settings. The product profile is initialized from the three bundles only when absent, so user-owned profile and home patch files remain authoritative after first creation. Electron window placement uses durable atomic replacement under Electron `userData`. Local text logs and Crashpad dumps have explicit count, size, and age retention. Lumi preferences, speech configuration, unbounded bond points, the daily award ledger, and the bounded feedback-identity window use one versioned Host-authoritative `ui-lumi.bond` record and never enter the Session log or model context.
+The desktop and CLI resolve the same `$DSH_HOME`. Every profile boot acquires exclusive Host ownership of its canonical path before profile composition or home writes; another Host for that home is rejected with live owner details, while an operating-system-owned endpoint releases the claim automatically after a crash. The desktop app adds `$DSH_HOME/lumi/packs`, `$DSH_HOME/logs/lumi-desktop`, and `$DSH_HOME/crashes/lumi-desktop`; it does not copy sessions, profiles, credentials, or settings. The product profile is initialized from the three bundles only when absent, so user-owned profile and home patch files remain authoritative after first creation. Electron window placement uses durable atomic replacement under Electron `userData`. Local text logs and Crashpad dumps have explicit count, size, and age retention. Lumi preferences, speech configuration, unbounded bond points, the daily award ledger, and the bounded feedback-identity window use one versioned Host-authoritative `ui-lumi.bond` record and never enter the Session log or model context.
 
 ## Character and browser model
 
@@ -46,6 +46,8 @@ The browser runtime derives character state from the active conversation project
 
 `.upstream.json` records the official repository, branch, last validated commit, and files that deserve manual review. The `upstream` remote fetches the official repository and has its push URL disabled locally. Add an `origin` remote only for a personal fork.
 
+`.upstream-patches.json` owns deliberate differences from official DSH. Each active patch states why an additive Lumi seam is insufficient, the exact paths it owns, focused validation, its retirement condition, and the official commit through which the patch was reviewed. Pre-policy differences that have not yet received that semantic classification are preserved as content-hashed legacy entries: they are not blanket authorization, and any content change fails `verify-upstream-patches` until the path is promoted to an active patch or explicitly re-frozen after review. Vendored Cordis remains outside this manifest.
+
 The protected update path is:
 
 ```powershell
@@ -53,9 +55,9 @@ pnpm run upstream:status
 pnpm run sync:upstream
 ```
 
-`upstream:status` is read-only. `sync:upstream` refuses a dirty worktree, fetches official commits and tags, fast-forwards `upstream-base`, returns to `main`, creates `codex/sync-YYYYMMDD-<sha>`, and merges `upstream-base`. A conflict or failed check leaves the synchronization branch and working state intact. After committing a repair on that exact branch, running the command again resumes it even when the local date has changed; an existing branch cannot be resumed from anywhere else. A successful merge runs Lumi contracts and build, official GUI and Web replay, the repository checks, and the built Electron test. The script always writes `docs/upstream-sync/<date>.md` with one trailing newline; only a completely successful run updates `.upstream.json` and `UPSTREAM_BASE.md`. Git `rerere` is enabled so repeated resolutions can be reused.
+`upstream:status` is read-only. `sync:upstream` refuses a dirty worktree, fetches official commits and tags, fast-forwards `upstream-base`, returns to `main`, creates `codex/sync-YYYYMMDD-<sha>`, and merges `upstream-base`. A conflict or failed check leaves the synchronization branch and working state intact. After committing a repair on that exact branch, running the command again resumes it even when the local date has changed; an existing branch cannot be resumed from anywhere else. A successful merge runs Lumi contracts and build, official GUI and Web replay, the repository checks, the downstream patch inventory, and the built Electron test. When official changes touch an active patch, the report names that patch and validation remains red until its manifest record states the reviewed outcome: retain, reapply, refactor onto a new seam, or retire. The script always writes `docs/upstream-sync/<date>.md` with one trailing newline; only a completely successful run updates `.upstream.json` and `UPSTREAM_BASE.md`. Git `rerere` is enabled so repeated resolutions can be reused.
 
-Resolve source files from upstream intent first, then reapply the small product extension. Do not copy official bundle rows into the Lumi bundle. Regenerate `pnpm-lock.yaml` with `pnpm install` instead of hand-merging dependency records when the lockfile conflict cannot be resolved mechanically. The report identifies official commits, monitored seams changed upstream, automated results, and the remaining manual Web, Lumi, and real-model checks.
+Resolve source files from upstream intent first, then reapply only the registered downstream patch behavior. Prefer moving a patch onto a new official extension seam over preserving a source edit. Do not copy official bundle rows into the Lumi bundle. Regenerate `pnpm-lock.yaml` with `pnpm install` instead of hand-merging dependency records when the lockfile conflict cannot be resolved mechanically. The report identifies official commits, monitored seams and maintained patches changed upstream, automated results, and the remaining manual Web, Lumi, and real-model checks.
 
 ## Release boundary
 

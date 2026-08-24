@@ -50,6 +50,19 @@ async function boot(dir: string, config: LlmPiAi.Config): Promise<Context> {
 }
 
 describe('request-level dynamic profiles', () => {
+  it('keeps arbitrary provider headers write-only on the settings wire', async () => {
+    const dir = await home()
+    const ctx = await boot(dir, {
+      providers: { openai: { headers: { Authorization: 'Bearer profile-secret', 'x-tenant': 'private' } } },
+    })
+    const wire = ctx.settings.describeForWire().find(descriptor => descriptor.ns === NS)!
+    expect(JSON.stringify(wire)).not.toContain('profile-secret')
+    expect(JSON.stringify(wire)).not.toContain('private')
+    expect(wire.secrets).toContainEqual({ path: ['providers', 'openai', 'headers'], set: true })
+    expect((ctx.settings.describe().find(descriptor => descriptor.ns === NS)!.value as LlmPiAi.Config)
+      .providers?.['openai']?.headers?.['Authorization']).toBe('Bearer profile-secret')
+  })
+
   it('mounts bare and dormant, then registers routes the moment settings supply providers', async () => {
     vi.stubEnv('PI_DYNAMIC_KEY', '')
     const dir = await home()

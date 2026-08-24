@@ -333,6 +333,7 @@ export class AgentLoop extends Service implements AgentFactory {
       },
     }
     installSettingsSection(ctx, AGENT_LOOP_SETTINGS_NAMESPACE, AGENT_LOOP_SETTINGS_SCHEMA, entry, {
+      surfaces: ['configuration-client'],
       // The schema admits any integer above zero; `resolveMaxParallelToolCalls`
       // owns the whole rule, so refusing here keeps the running scheduler on
       // its last good cap instead of failing at the next tool group.

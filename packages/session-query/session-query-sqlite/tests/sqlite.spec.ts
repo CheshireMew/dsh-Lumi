@@ -126,6 +126,11 @@ class TestPersistence extends SessionPersistence {
     return Promise.resolve()
   }
 
+  delete(id: SessionIdType): Promise<void> {
+    TestPersistence.entries.delete(id)
+    return Promise.resolve()
+  }
+
   async load(id: SessionIdType): Promise<{ meta: SessionHeader; events: SessionEvent[] }> {
     TestPersistence.loads.set(id, (TestPersistence.loads.get(id) ?? 0) + 1)
     if (TestPersistence.failure !== undefined) throw TestPersistence.failure
@@ -172,6 +177,7 @@ class TestPersistence extends SessionPersistence {
     const snapshots = TestPersistence.snapshotOverride?.()
       ?? [...TestPersistence.entries.values()].map(entry => ({
         header: structuredClone(entry.meta),
+        lastPromptAt: null,
         revision: SessionPersistenceRevision(`test:${TestPersistence.revisions.get(entry.meta.id)}`),
       }))
     await TestPersistence.snapshotEffect?.(signal)
@@ -1055,15 +1061,30 @@ describe('SQLite reconciliation and source lifecycle', () => {
     TestPersistence.snapshotOverride = () => 'not-an-array' as never
     await expect(ctx.sessionQuery.searchSessions({ query: 'needle' }))
       .rejects.toThrow(expectCode('SESSION_QUERY_PERSISTENCE_FAILED'))
-    TestPersistence.snapshotOverride = () => [{ header: durable, revision: 1 as never }]
+    TestPersistence.snapshotOverride = () => [{ header: durable, lastPromptAt: null, revision: 1 as never }]
+    await expect(ctx.sessionQuery.searchSessions({ query: 'needle' }))
+      .rejects.toThrow(expectCode('SESSION_QUERY_PERSISTENCE_FAILED'))
+    TestPersistence.snapshotOverride = () => [{
+      header: durable,
+      lastPromptAt: 0.5,
+      revision: SessionPersistenceRevision('fractional'),
+    }]
     await expect(ctx.sessionQuery.searchSessions({ query: 'needle' }))
       .rejects.toThrow(expectCode('SESSION_QUERY_PERSISTENCE_FAILED'))
     TestPersistence.snapshotOverride = () => [
-      { header: durable, revision: SessionPersistenceRevision('duplicate:1') },
-      { header: durable, revision: SessionPersistenceRevision('duplicate:2') },
+      { header: durable, lastPromptAt: null, revision: SessionPersistenceRevision('duplicate:1') },
+      { header: durable, lastPromptAt: null, revision: SessionPersistenceRevision('duplicate:2') },
     ]
     await expect(ctx.sessionQuery.searchSessions({ query: 'needle' }))
       .rejects.toThrow(expectCode('SESSION_QUERY_PERSISTENCE_FAILED'))
+
+    TestPersistence.snapshotOverride = () => [{
+      header: durable,
+      lastPromptAt: -1,
+      revision: SessionPersistenceRevision('pre-epoch'),
+    }]
+    await expect(ctx.sessionQuery.searchSessions({ query: 'needle' }))
+      .resolves.toMatchObject({ items: [{ header: durable }] })
 
     TestPersistence.snapshotOverride = undefined
     const typed = new SessionQueryError('typed persistence failure', 'SESSION_QUERY_PERSISTENCE_FAILED')

@@ -67,18 +67,18 @@ export async function setup(config?: Config): Promise<Harness> {
     const { requestId, pluginId, packageId, mode } = request
     gateway.answering = Promise.resolve().then(async (): Promise<void> => {
       if (answer === 'reject') {
-        await runner.resolveRequestRun(requestId, { ok: false, reason: 'rejected', message: 'not now' })
+        await runner.resolveRequestRun(pluginId, requestId, { ok: false, reason: 'rejected', message: 'not now' })
         return
       }
       const half = await runner.runHostHalf(AGENT_A, pluginId, packageId, mode, requestId, false)
       if (!half.ok) {
-        await runner.resolveRequestRun(requestId, {
+        await runner.resolveRequestRun(pluginId, requestId, {
           ok: false, reason: 'host-half-failed', message: half.message,
         })
         return
       }
       if (typeof answer === 'object') {
-        await runner.resolveRequestRun(requestId, {
+        await runner.resolveRequestRun(pluginId, requestId, {
           ok: false,
           reason: 'client-half-failed',
           pluginRunId: half.pluginRunId,
@@ -88,7 +88,7 @@ export async function setup(config?: Config): Promise<Harness> {
         return
       }
       const source = runner.getClientCode(AGENT_A, pluginId, half.pluginRunId)
-      await runner.resolveRequestRun(requestId, {
+      await runner.resolveRequestRun(pluginId, requestId, {
         ok: true,
         pluginRunId: source.pluginRunId,
         ...gateway.clientWaitingFor === undefined ? {} : { waitingFor: gateway.clientWaitingFor },

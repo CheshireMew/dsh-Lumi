@@ -22,6 +22,7 @@ export function apply(ctx: Context): void {
     settingsCtx.settings.register(
       settingsNamespace(ONBOARDING_SETTINGS_NAMESPACE),
       OnboardingSettingsSchema,
+      { surfaces: ['configuration-client'] },
     )
   })
 }

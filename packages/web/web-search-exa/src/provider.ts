@@ -7,6 +7,7 @@
  */
 
 import { WebError } from '@deepseek-ai/dsh-web'
+import { PRODUCT_TOKEN } from '@deepseek-ai/dsh-product-identity'
 import type {
   WebSearchProvider,
   WebSearchRequest,
@@ -27,8 +28,8 @@ export const EXA_DEFAULT_SEARCH_TYPE = 'auto'
 /** Default number of highlight sentences requested per result. */
 export const EXA_DEFAULT_HIGHLIGHTS_PER_RESULT = 1
 
-/** Attribution header sent on every request. Bump with the package version. */
-const USER_AGENT = 'deepseek-harness/0.0.1'
+/** Attribution header sent on every request. */
+const USER_AGENT = PRODUCT_TOKEN
 
 /** Resolved provider options (the plugin's `apply` supplies env-var and constant defaults). */
 export interface ExaSearchProviderOptions {

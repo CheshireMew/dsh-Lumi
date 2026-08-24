@@ -54,11 +54,16 @@ export const Config: z<Config> = z.object({
  */
 export class SqliteStorageBackend implements StorageBackend {
   /** The key-value facet; the only shape this backend serves. */
-  readonly kv: KvFacet = { open: descriptor => this.openUnit(descriptor) }
+  readonly kv: KvFacet = {
+    open: descriptor => this.openUnit(descriptor),
+    destroy: descriptor => this.destroyUnit(descriptor),
+  }
 
   private readonly ready: Promise<DatabaseSync>
   /** Open (or still-opening) units by name; presence is the double-open guard. */
   private readonly units = new Map<string, Promise<SqliteKvUnit>>()
+  /** Destructive operations by unit name; close drains them before releasing the database. */
+  private readonly destroying = new Map<string, Promise<void>>()
   private closing: Promise<void> | undefined
 
   /**
@@ -73,26 +78,58 @@ export class SqliteStorageBackend implements StorageBackend {
   }
 
   private openUnit(descriptor: KvUnitDescriptor): Promise<KvUnit> {
-    if (this.closing !== undefined) {
-      return Promise.reject(new StorageError('closed', 'sqlite storage backend is closed'))
-    }
-    if (!UNIT_NAME_RE.test(descriptor.name)) {
-      return Promise.reject(new Error(`kv unit name '${descriptor.name}' violates ${UNIT_NAME_RE}`))
-    }
-    for (const table of descriptor.tables) {
-      if (!UNIT_NAME_RE.test(table)) {
-        return Promise.reject(new Error(`kv table name '${table}' in unit '${descriptor.name}' violates ${UNIT_NAME_RE}`))
-      }
-    }
-    if (this.units.has(descriptor.name)) {
-      return Promise.reject(new Error(`kv unit '${descriptor.name}' is already open (double-open is a caller bug)`))
-    }
+    const unavailable = this.unitUnavailable(descriptor, 'open')
+    if (unavailable !== undefined) return Promise.reject(unavailable)
     // Reserve the name synchronously so a concurrent second open of the same
     // name rejects instead of racing past the guard during the awaits below.
     const pending = this.materializeUnit(descriptor)
     this.units.set(descriptor.name, pending)
     pending.catch(() => this.units.delete(descriptor.name))
     return pending
+  }
+
+  private destroyUnit(descriptor: KvUnitDescriptor): Promise<void> {
+    const unavailable = this.unitUnavailable(descriptor, 'destroy')
+    if (unavailable !== undefined) return Promise.reject(unavailable)
+    const pending = this.destroyMedium(descriptor)
+    this.destroying.set(descriptor.name, pending)
+    return pending.finally(() => this.destroying.delete(descriptor.name))
+  }
+
+  /** Return an asynchronous-call rejection without reserving a unit name. */
+  private unitUnavailable(descriptor: KvUnitDescriptor, operation: 'open' | 'destroy'): Error | undefined {
+    if (this.closing !== undefined) {
+      return new StorageError('closed', 'sqlite storage backend is closed')
+    }
+    try {
+      validateDescriptor(descriptor)
+    } catch (error: unknown) {
+      return error instanceof Error ? error : new Error(String(error))
+    }
+    if (!this.units.has(descriptor.name) && !this.destroying.has(descriptor.name)) return undefined
+    return operation === 'open'
+      ? new Error(`kv unit '${descriptor.name}' is already open (double-open is a caller bug)`)
+      : new Error(`kv unit '${descriptor.name}' is already open; destroy requires a closed unit`)
+  }
+
+  private async destroyMedium(descriptor: KvUnitDescriptor): Promise<void> {
+    const db = await this.ready
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const table of descriptor.tables) {
+        db.exec(`DROP TABLE IF EXISTS "${recordTableName(descriptor.name, table)}"`)
+      }
+      db.prepare('DELETE FROM unit_globals WHERE unit = ?').run(descriptor.name)
+      db.prepare('DELETE FROM units WHERE name = ?').run(descriptor.name)
+      db.exec('COMMIT')
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        // SQLite owns transaction state; the original failure is the useful diagnostic.
+      }
+      throw error
+    }
   }
 
   private async materializeUnit(descriptor: KvUnitDescriptor): Promise<SqliteKvUnit> {
@@ -145,7 +182,20 @@ export class SqliteStorageBackend implements StorageBackend {
       const unit = await pending.catch(() => undefined)
       await unit?.close()
     }
+    await Promise.allSettled([...this.destroying.values()])
     db.close()
+  }
+}
+
+/** Validate names before they can reach SQLite identifiers. */
+function validateDescriptor(descriptor: KvUnitDescriptor): void {
+  if (!UNIT_NAME_RE.test(descriptor.name)) {
+    throw new Error(`kv unit name '${descriptor.name}' violates ${UNIT_NAME_RE}`)
+  }
+  for (const table of descriptor.tables) {
+    if (!UNIT_NAME_RE.test(table)) {
+      throw new Error(`kv table name '${table}' in unit '${descriptor.name}' violates ${UNIT_NAME_RE}`)
+    }
   }
 }
 

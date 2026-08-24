@@ -17,8 +17,8 @@ import {
   type SessionSearchHit,
   type SessionSearchRequest,
 } from '@deepseek-ai/dsh-session-query'
-import type { RpcRequest } from '@deepseek-ai/dsh-host-apiproxy/api'
-import { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api'
+import type { RpcRequest } from '@deepseek-ai/dsh-api-protocol/api'
+import { RpcId } from '@deepseek-ai/dsh-api-protocol/api'
 import { createApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -79,6 +79,9 @@ describe('session.search', () => {
     const legacy = header('legacy', null)
     ctx.provide('sessionPersistence', {
       list: () => Promise.resolve([cold, legacy]),
+      listSnapshots: () => Promise.resolve([cold, legacy].map(header => ({
+        header, lastPromptAt: null, revision: `test:${header.id}`,
+      }))),
       locate: () => undefined,
     } as never)
 
@@ -727,6 +730,9 @@ describe('session.search', () => {
     )
     ctx.provide('sessionPersistence', {
       list: () => Promise.resolve(cold),
+      listSnapshots: () => Promise.resolve(cold.map(header => ({
+        header, lastPromptAt: null, revision: `test:${header.id}`,
+      }))),
       locate: () => undefined,
     } as never)
     const searchSessions = vi.fn((_request: SessionSearchRequest) => Promise.resolve({
@@ -761,6 +767,9 @@ describe('session.search', () => {
     let locateCalls = 0
     ctx.provide('sessionPersistence', {
       list,
+      listSnapshots: (signal?: AbortSignal) => list(signal).then(headers => headers.map(header => ({
+        header, lastPromptAt: null, revision: `test:${header.id}`,
+      }))),
       locate: () => {
         locateCalls++
         controller.abort()
@@ -796,6 +805,9 @@ describe('session.search', () => {
     }
     ctx.provide('sessionPersistence', {
       list: () => Promise.resolve(cold),
+      listSnapshots: () => Promise.resolve(cold.map(header => ({
+        header, lastPromptAt: null, revision: `test:${header.id}`,
+      }))),
       locate: (meta: SessionHeader) => ({ kind: 'jsonl', path: `/logs/${meta.id}.jsonl` }),
     } as never)
     const searchSessions = vi.fn()

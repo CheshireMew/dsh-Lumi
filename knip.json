@@ -150,6 +150,18 @@
         "@deepseek-ai/dsh-api-gateway"
       ]
     },
+    "packages/api/protocol": {
+      "entry": [],
+      "project": [
+        "src/**/*.ts"
+      ]
+    },
+    "packages/test-support/client-api": {
+      "entry": [],
+      "project": [
+        "src/**/*.ts"
+      ]
+    },
     "packages/client/ui-primitives": {
       "entry": [
         "tests/**/*.spec.tsx"

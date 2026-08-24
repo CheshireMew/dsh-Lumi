@@ -180,6 +180,15 @@ describe('LocalJobRegistry.start', () => {
     expect(ctx.jobs).toBeInstanceOf(LocalJobRegistry)
   })
 
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648])(
+    'rejects invalid cancellationTimeoutMs config: %s',
+    async (cancellationTimeoutMs) => {
+      const ctx = new Context()
+      await expect(ctx.plugin(LocalJobRegistry, { cancellationTimeoutMs }))
+        .rejects.toThrow()
+    },
+  )
+
   it('defaults each owner bucket to ten active jobs', async () => {
     const ctx = await harness()
     const live = Array.from({ length: 10 }, () => producer())
@@ -442,6 +451,41 @@ describe('LocalJobRegistry.kill', () => {
 
     broken = false
     expect(ctx.jobs.kill(id)).toBe('already-finished')
+  })
+
+  it('bounds an ineffective cancel, releases capacity, and ignores late producer settlement', async () => {
+    vi.useFakeTimers()
+    try {
+      const ctx = await harness({ maxConcurrentJobsPerOwner: 1, cancellationTimeoutMs: 25 })
+      const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+      const seen: JobSnapshot[] = []
+      ctx.jobs.onJobDone(snapshot => void seen.push(snapshot))
+      const p = producer()
+      const id = ctx.jobs.start(p.spec)
+
+      expect(ctx.jobs.kill(id, undefined, 'stop')).toBe('requested')
+      expect(ctx.jobs.kill(id, undefined, 'duplicate')).toBe('requested')
+      expect(p.cancels).toEqual(['stop'])
+      expect(() => ctx.jobs.start(producer().spec)).toThrow('(limit: 1)')
+
+      await vi.advanceTimersByTimeAsync(25)
+
+      expect(ctx.jobs.get(id)).toMatchObject({
+        status: 'failed',
+        reported: true,
+        detail: 'cancellation did not settle within 25ms; producer work may be orphaned',
+      })
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('job record forced failed'))
+      expect(seen).toHaveLength(1)
+      expect(ctx.jobs.start(producer().spec)).toBe('bash-2')
+
+      p.settle({ status: 'killed', detail: 'late' })
+      await Promise.resolve()
+      expect(ctx.jobs.get(id).status).toBe('failed')
+      expect(seen).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -851,6 +895,33 @@ describe('LocalJobRegistry owner cleanup', () => {
     expect(seen[0]?.detail).toContain('cancel threw during teardown')
     expect(ctx.jobs.list(owner)).toEqual([])
   })
+
+  it('bounds owner teardown when cancellation returns but producer done never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const ctx = await harness({ cancellationTimeoutMs: 25 })
+      const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+      const owner = stubAgent(ctx, 'owner')
+      ctx.agents.register(owner)
+      const seen: JobSnapshot[] = []
+      ctx.jobs.onJobDone(snapshot => void seen.push(snapshot))
+      const p = producer({ owner })
+      ctx.jobs.start(p.spec)
+
+      const disposal = disposeAgentScope(owner)
+      await vi.advanceTimersByTimeAsync(25)
+      await disposal
+
+      expect(p.cancels).toEqual(['owner disposed'])
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toMatchObject({ status: 'failed', reported: true })
+      expect(seen[0]?.detail).toContain('producer work may be orphaned')
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('job record forced failed'))
+      expect(ctx.jobs.list(owner)).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('LocalJobRegistry disposal', () => {
@@ -918,6 +989,28 @@ describe('LocalJobRegistry disposal', () => {
     expect(disposedWithoutProducerDone).toBe(true)
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('work may be orphaned'))
     expect(seen).toEqual([])
+  })
+
+  it('bounds service disposal when cancellation returns but producer done never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const ctx = new Context()
+      await ctx.plugin(AgentRegistry)
+      const fiber = await ctx.plugin(LocalJobRegistry, { cancellationTimeoutMs: 25 })
+      ctx.jobs.attachController('test-controller')
+      const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+      const p = producer()
+      ctx.jobs.start(p.spec)
+
+      const disposal = fiber.dispose()
+      await vi.advanceTimersByTimeAsync(25)
+      await disposal
+
+      expect(p.cancels).toEqual(['jobs service disposed'])
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('job record forced failed'))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('detaches owner effects from still-live agent scopes when the service unloads', async () => {

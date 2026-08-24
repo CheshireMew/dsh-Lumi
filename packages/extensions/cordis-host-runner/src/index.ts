@@ -88,6 +88,8 @@ declare module '@deepseek-ai/cordis' {
 export interface Config {
   /** Maximum synchronous VM evaluation time in milliseconds. */
   vmTimeoutMs?: number
+  /** Maximum lifetime of one browser activation request in milliseconds. */
+  requestTimeoutMs?: number
 }
 
 type ResolvedConfig = Required<Config>
@@ -126,12 +128,14 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
 
   static Config: z<Config> = z.object({
     vmTimeoutMs: z.number().min(1).default(5000),
+    requestTimeoutMs: z.number().step(1).min(1).max(2_147_483_647).default(600_000),
   })
 
   private readonly rootCtx: Context
   private readonly registry = new DynamicCordisRegistry()
   private readonly inspectRegistry: CordisInspectRegistryService
   private readonly starting = new Map<CordisDynamicPluginId, Promise<DynamicCordisHostHalfResult>>()
+  private readonly requestLeases = new Map<ApprovalRequestId, () => void>()
   private readonly resolved: ResolvedConfig
   private group: Fiber | undefined
 
@@ -141,6 +145,21 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     this.rootCtx = ctx
     this.resolved = config as ResolvedConfig
     this.inspectRegistry = new CordisInspectRegistryService(ctx)
+    ctx.effect(() => async () => {
+      const pending = this.registry.pendingRequestEntries().flatMap(([requestId]) => {
+        const request = this.registry.claimRequest(requestId)
+        if (request === undefined) return []
+        this.releaseRequestLease(requestId)
+        return [[requestId, request] as const]
+      })
+      await Promise.all(pending.map(([requestId, request]) => this.cancelClaimedRequest(
+        requestId,
+        request,
+        `dynamic plugin "${request.pluginId}" was cancelled because its runner stopped`,
+        'cancelled',
+        false,
+      )))
+    }, 'cordis-host-runner.pendingRequests')
   }
 
   /**
@@ -211,7 +230,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     const plugin = this.owned(agent, pluginId)
     if (plugin === undefined) return { ok: false, reason: 'plugin-missing', message: missingPluginMessage(pluginId) }
     const wasRunning = plugin.run !== undefined
-    this.cancelPending(pluginId, `dynamic plugin "${pluginId}" was removed before approval`)
+    await this.cancelPending(pluginId, `dynamic plugin "${pluginId}" was removed before approval`)
     if (plugin.run !== undefined) await this.retract(plugin)
     this.registry.delete(pluginId)
     return { ok: true, wasRunning }
@@ -288,6 +307,14 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
       mode,
       requiresApproval,
     })
+    this.armRequestLease(requestId, signal)
+    if (this.registry.peekRequest(requestId) === undefined) {
+      return {
+        ok: false,
+        reason: 'cancelled',
+        message: `the run request for dynamic plugin "${pluginId}" was cancelled before dispatch`,
+      }
+    }
     this.ctx.emit('cordis/request-run', {
       requestId,
       agentId: agent.id,
@@ -369,6 +396,12 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
       if (attempt.host.status !== 'absent') attempt.host = { status: 'pending', waitingFor: [] }
     }
     const started = await this.activate(plan, requestId ?? undefined, attaching, attempt)
+    if (requestId !== null && this.registry.peekRequest(requestId) === undefined) {
+      if (started.ok && started.startedHere && plan.plugin.run?.pluginRunId === started.pluginRunId) {
+        await this.retract(plan.plugin)
+      }
+      return { ok: false, message: `run request "${requestId}" expired before Host activation completed` }
+    }
     if (!started.ok) this.failAttempt(plan.plugin, attempt, 'host-load', started)
     return started
   }
@@ -405,22 +438,37 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
 
   /**
    * Resolve one model-driven Client activation request.
+   * @param pluginId - Dynamic plugin identity the browser resolved.
    * @param requestId - Request identity to settle once.
    * @param resolution - Browser refusal or exact Client activation result.
    * @returns Whether the still-pending request accepted this resolution.
    */
   @Remote('resolveRequestRun')
   async resolveRequestRun(
+    pluginId: CordisDynamicPluginId,
     requestId: ApprovalRequestId,
     resolution: DynamicCordisRunResolution,
   ): Promise<DynamicCordisResolveAck> {
-    const pending = this.registry.peekRequest(requestId)
-    if (pending === undefined) return { accepted: false }
+    const pending = this.registry.claimRequest(requestId)
+    if (pending === undefined) {
+      const plugin = this.registry.get(pluginId)
+      const current = resolution.pluginRunId !== undefined && plugin?.run?.pluginRunId === resolution.pluginRunId
+      return { accepted: false, reason: current ? 'request-settled' : 'activation-superseded', retract: !current }
+    }
+    this.releaseRequestLease(requestId)
     const plugin = this.registry.get(pending.pluginId)
-    if (resolution.ok && plugin?.run?.pluginRunId !== resolution.pluginRunId) return { accepted: false }
-    if (!resolution.ok && resolution.pluginRunId !== undefined
-      && plugin?.run?.pluginRunId !== resolution.pluginRunId) return { accepted: false }
-    this.registry.claimRequest(requestId)
+    const mismatchedPlugin = pending.pluginId !== pluginId
+    const staleRun = resolution.pluginRunId !== undefined && plugin?.run?.pluginRunId !== resolution.pluginRunId
+    if (mismatchedPlugin || staleRun) {
+      await this.cancelClaimedRequest(
+        requestId,
+        pending,
+        `browser activation for dynamic plugin "${pending.pluginId}" was superseded before settlement`,
+        'cancelled',
+        true,
+      )
+      return { accepted: false, reason: 'activation-superseded', retract: true }
+    }
     const settled = await this.settleActivation(plugin, resolution, requestId)
     this.announceResolved(requestId, resolution, pending.requiresApproval ? undefined : 'completed')
     this.steerRunOutcome(pending, settled)
@@ -460,7 +508,9 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     if (plugin.run === undefined && pending === undefined) {
       return { ok: false, reason: 'not-running', message: `dynamic plugin "${pluginId}" is not running` }
     }
-    if (pending !== undefined) this.cancelPending(pluginId, `dynamic plugin "${pluginId}" was stopped before approval`)
+    if (pending !== undefined) {
+      await this.cancelPending(pluginId, `dynamic plugin "${pluginId}" was stopped before approval`)
+    }
     if (plugin.run !== undefined) await this.retract(plugin)
     if (plugin.latestRun !== undefined) {
       plugin.latestRun.status = 'stopped'
@@ -1156,19 +1206,89 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     }))
   }
 
-  private cancelPending(pluginId: CordisDynamicPluginId, message: string): void {
+  private async cancelPending(pluginId: CordisDynamicPluginId, message: string): Promise<void> {
     const requestId = this.registry.pendingRequestFor(pluginId)
     if (requestId === undefined) return
     const pending = this.registry.claimRequest(requestId)
     if (pending === undefined) return
-    const plugin = this.registry.get(pluginId)
+    this.releaseRequestLease(requestId)
+    await this.cancelClaimedRequest(requestId, pending, message, 'cancelled', false)
+  }
+
+  private async cancelClaimedRequest(
+    requestId: ApprovalRequestId,
+    pending: DynamicCordisPendingRequest,
+    message: string,
+    outcome: 'cancelled' | 'timed-out',
+    notifyAgent: boolean,
+  ): Promise<void> {
+    const plugin = this.registry.get(pending.pluginId)
     if (plugin?.latestRun?.pluginRunId === pending.pluginRunId) {
-      plugin.latestRun.status = 'cancelled'
+      plugin.latestRun.status = outcome === 'timed-out' ? 'failed' : 'cancelled'
       plugin.latestRun.error = this.diagnostic(plugin, plugin.latestRun, 'approval', message)
       delete plugin.latestRun.approvalRequestId
       delete plugin.latestRun.requiresApproval
     }
-    this.announceResolved(requestId, { ok: false, reason: 'rejected' }, 'cancelled')
+    if (plugin?.run?.startedForRequest === requestId) await this.retract(plugin)
+    this.announceResolved(requestId, { ok: false, reason: 'rejected' }, outcome)
+    if (notifyAgent) {
+      this.steerRunOutcome(pending, {
+        ok: false,
+        reason: 'cancelled',
+        message,
+      })
+    }
+  }
+
+  private armRequestLease(requestId: ApprovalRequestId, signal: AbortSignal | undefined): void {
+    const pending = this.registry.peekRequest(requestId)
+    if (pending === undefined) return
+    const onAbort = (): void => {
+      void this.cancelRequestById(
+        requestId,
+        `dynamic plugin "${pending.pluginId}" was cancelled with its requesting tool call`,
+        'cancelled',
+        false,
+      ).catch((error: unknown) => {
+        this.ctx.logger.warn(`cordis-host-runner: failed to cancel request ${requestId}: ${String(error)}`)
+      })
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    const timer = setTimeout(() => {
+      void this.cancelRequestById(
+        requestId,
+        `browser activation for dynamic plugin "${pending.pluginId}" did not settle within ${this.resolved.requestTimeoutMs} ms`,
+        'timed-out',
+        true,
+      ).catch((error: unknown) => {
+        this.ctx.logger.warn(`cordis-host-runner: failed to expire request ${requestId}: ${String(error)}`)
+      })
+    }, this.resolved.requestTimeoutMs)
+    timer.unref()
+    this.requestLeases.set(requestId, () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+    })
+    if (signal?.aborted === true) onAbort()
+  }
+
+  private async cancelRequestById(
+    requestId: ApprovalRequestId,
+    message: string,
+    outcome: 'cancelled' | 'timed-out',
+    notifyAgent: boolean,
+  ): Promise<void> {
+    const pending = this.registry.claimRequest(requestId)
+    if (pending === undefined) return
+    this.releaseRequestLease(requestId)
+    await this.cancelClaimedRequest(requestId, pending, message, outcome, notifyAgent)
+  }
+
+  private releaseRequestLease(requestId: ApprovalRequestId): void {
+    const release = this.requestLeases.get(requestId)
+    if (release === undefined) return
+    this.requestLeases.delete(requestId)
+    release()
   }
 
   private createAttempt(plan: ActivationPlan): DynamicCordisRunAttempt {

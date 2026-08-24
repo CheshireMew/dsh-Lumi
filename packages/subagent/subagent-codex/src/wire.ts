@@ -9,6 +9,7 @@
 
 import type { Readable, Writable } from 'node:stream'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { PRODUCT_VERSION } from '@deepseek-ai/dsh-product-identity'
 import type { SubagentResult } from '@deepseek-ai/dsh-subagent'
 import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
 
@@ -134,7 +135,7 @@ export class CodexAppServerWire {
       clientInfo: {
         name: 'deepseek-harness',
         title: 'DeepSeek Harness',
-        version: '0.0.1',
+        version: PRODUCT_VERSION,
       },
       capabilities: {
         experimentalApi: false,

@@ -302,7 +302,7 @@ describe('retract', () => {
   it('unloads at the named revision', async () => {
     const bench = await boot()
     await bench.runner.load(half())
-    bench.runner.retract(PLUGIN, RUN)
+    await bench.runner.retract(PLUGIN, RUN)
     await bench.settle()
     expect(bench.removed).toEqual(['entry-1'])
     expect(bench.invalidated).toEqual(['dyn/dyn-1', 'dyn/dyn-1'])
@@ -312,14 +312,14 @@ describe('retract', () => {
   it('ignores a retract of a superseded revision', async () => {
     const bench = await boot()
     await bench.runner.load(half({ pluginRunId: runId(3) }))
-    bench.runner.retract(PLUGIN, runId(2))
+    await bench.runner.retract(PLUGIN, runId(2))
     await bench.settle()
     expect(bench.runner.isLoaded(PLUGIN)).toBe(true)
   })
 
   it('ignores a retract of a package this page never loaded', async () => {
     const bench = await boot()
-    bench.runner.retract(PLUGIN, RUN)
+    await bench.runner.retract(PLUGIN, RUN)
     await bench.settle()
     expect(bench.removed).toEqual([])
   })
@@ -336,7 +336,7 @@ describe('observation and disposal', () => {
     expect(notified).toBe(1)
     expect(bench.runner.getSnapshot()).not.toBe(empty)
     unsubscribe()
-    bench.runner.retract(PLUGIN, RUN)
+    await bench.runner.retract(PLUGIN, RUN)
     await bench.settle()
     expect(notified).toBe(1)
   })
@@ -488,7 +488,7 @@ describe('render failures', () => {
     await bench.runner.load(half({ code: CONTRIBUTOR }))
     const [entry] = bench.slots.entries('root')
     bench.crash('root', entry, new Error('boom'))
-    bench.runner.retract(PLUGIN, RUN)
+    await bench.runner.retract(PLUGIN, RUN)
     await bench.settle()
     // A row must never show a failure of something that no longer renders here.
     expect(bench.runner.renderFailures.getSnapshot().size).toBe(0)

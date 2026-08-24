@@ -10,6 +10,8 @@ Confirming a directory is the picked path and dismissing the dialog is the cance
 
 The node half is an empty `apply`: it exists so the plugin appears in the host cordis.yml and Loader, while the browser half ships through `exports["./client"]` and is discovered through the `dsh.client` manifest declaration.
 
+`directory-browser-model.ts` owns navigation races, draft-path scanning, directory creation, and focus restoration. `DirectoryBrowser.tsx` owns the Miller-column and dialog rendering and consumes the resulting view model. The split keeps filesystem workflow changes independent from visual composition.
+
 ## Model Experience
 
 None, as the directory browser is browser chrome; nothing here reaches a model request.

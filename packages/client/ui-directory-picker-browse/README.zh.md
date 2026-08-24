@@ -10,6 +10,8 @@
 
 node 半边是一个空 `apply`：它的存在只为让插件出现在 host 的 cordis.yml 与 Loader 中，浏览器半边经 `exports["./client"]` 出货，并通过 `dsh.client` 清单声明被发现。
 
+`directory-browser-model.ts` 拥有导航竞态、路径草稿扫描、目录创建和焦点恢复。`DirectoryBrowser.tsx` 拥有 Miller 分栏与对话框渲染，并消费前者产生的 view model。这样，文件系统流程变化不会再与视觉组装互相牵连。
+
 ## 模型体验
 
 无，因为目录浏览器属于浏览器界面；本包中的任何内容都不会进入模型请求。

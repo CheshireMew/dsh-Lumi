@@ -6,6 +6,16 @@ DeepSeek Harness is a plugin harness on vendored Cordis: **everything is a plugi
 
 **Remove at the first tagged release.** With no external consumers, prefer correct foundations over compatibility shims; rename or repackage and update all references together. Backends reject old disk formats. SQLite advances `SCHEMA_VERSION`; `dsh-session` stays at `SESSION_FORMAT_VERSION = 0` without compatibility promises.
 
+## Upstream DSH ownership
+
+Lumi extends official DeepSeek Harness; every path present in `upstream-base` is upstream-owned.
+
+- Prefer `@dsh-lumi/*` plugins, bundles, adapters, configuration, and patch layers. An upstream edit, including a new `@deepseek-ai/dsh-*` package, requires explicit user authorization after explaining why no additive seam works; a broad improvement request is insufficient.
+- Register every authorized edit in `.upstream-patches.json` with its reason, paths, validation, and retirement condition. Keep it minimal; exclude unrelated formatting, refactors, and Lumi-only behavior. Upstream PR acceptance is irrelevant.
+- Each upstream sync records whether every touched patch is retained, reapplied, moved onto a new seam, or retired. `verify-upstream-patches` rejects unregistered changes and stale records.
+
+`vendor/` remains governed separately below.
+
 ## Repository layout
 
 ```
@@ -71,6 +81,7 @@ pnpm run lint
 pnpm run duplication    # cross-file TypeScript clone detection
 pnpm run build          # tsc emits lib/types, tsdown bundles runtime
 pnpm run hygiene        # knip + publint + workspace constraints + NodeNext consumer check
+pnpm run verify-upstream-patches  # registered downstream DSH patches + frozen legacy differences
 pnpm run check:windows-wine  # ONLY when diagnosing a known Windows failure (needs wine); CI owns this signal
 pnpm run doc-sync       # all documentation gates; leaf list in scripts/run-gates.ts
 pnpm run website:build  # VitePress build (doubles as dead-link check)

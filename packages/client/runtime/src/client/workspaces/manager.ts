@@ -3,12 +3,10 @@
 import type {
   HostFrame, IApiClient, RpcError, RpcRequest, RpcResult, SessionId, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
-import { transportError } from '@deepseek-ai/dsh-host-apiproxy/api'
-import { Notifier } from '../sessions/notifier.ts'
+import { transportError } from '@deepseek-ai/dsh-api-protocol/api'
+import { Notifier } from '../contract/notifier.ts'
+import type { WorkspaceListPhase } from '../contract/workspaces.ts'
 import { Workspace, type WorkspaceCreateInput } from './workspace.ts'
-
-/** Monotone workspace-list arrival lifecycle. */
-export type WorkspaceListPhase = 'pending' | 'ready'
 
 /** Immutable workspace-list snapshot. */
 export interface WorkspaceListSnapshot {
@@ -227,6 +225,17 @@ export class WorkspaceManager {
    */
   async archiveSession(sessionId: SessionId): Promise<RpcResult<{ archivedSessionIds: SessionId[] }>> {
     const { result } = await this.api.workspace.archiveSession({ sessionId })
+    if (result.ok) this.installArchived(result.value.archivedSessionIds)
+    return result
+  }
+
+  /**
+   * Restore one archived session and install the returned complete set.
+   * @param sessionId - session to remove from the archive set.
+   * @returns the wire result containing the complete archive set.
+   */
+  async unarchiveSession(sessionId: SessionId): Promise<RpcResult<{ archivedSessionIds: SessionId[] }>> {
+    const { result } = await this.api.workspace.unarchiveSession({ sessionId })
     if (result.ok) this.installArchived(result.value.archivedSessionIds)
     return result
   }

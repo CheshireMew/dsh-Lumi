@@ -273,4 +273,12 @@ export class DynamicCordisRegistry {
     }
     return undefined
   }
+
+  /**
+   * Snapshot every pending activation request.
+   * @returns request identities and their current metadata in insertion order.
+   */
+  pendingRequestEntries(): Array<[ApprovalRequestId, DynamicCordisPendingRequest]> {
+    return [...this.pendingRequests]
+  }
 }

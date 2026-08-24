@@ -11,8 +11,8 @@ import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import type { Workspace } from '@deepseek-ai/dsh-workspace'
-import type { RpcRequest } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
-import { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
+import type { RpcRequest } from '@deepseek-ai/dsh-api-protocol/api/rpc'
+import { RpcId } from '@deepseek-ai/dsh-api-protocol/api/rpc'
 import { createApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 
 const sid = (id: string): SessionId => id as SessionId

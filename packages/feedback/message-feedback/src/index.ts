@@ -9,7 +9,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import s from '@deepseek-ai/schemastery'
 import { deriveEventMessage, isAppendSurfaceEvent } from '@deepseek-ai/dsh-session/surface'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session/types'
-import type { SessionInspection } from '@deepseek-ai/dsh-session-persistence'
+import { pruneUnknownSessionRows, type SessionInspection } from '@deepseek-ai/dsh-session-persistence'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import { messageFeedbackDomainSpec } from './spec.ts'
@@ -178,6 +178,14 @@ export class MessageFeedbackService extends TypertRemoteService {
       await domain.close()
     }, 'message-feedback.domainClose')
     this.table = domain.table('sessions')
+    await this.pruneDeletedRows()
+    this.ctx.on('session-persistence/deleted', (sessionId: SessionId) => {
+      void this.enqueue(sessionId, async () => {
+        await this.requireTable().delete(sessionId)
+      }).catch((error: unknown) => {
+        this.ctx.logger.warn(`message-feedback: failed to remove deleted session '${sessionId}': ${String(error)}`)
+      })
+    })
   }
 
   /**
@@ -309,6 +317,15 @@ export class MessageFeedbackService extends TypertRemoteService {
       }
     }
     return success(await this.ctx.sessionPersistence.inspect(sessionId))
+  }
+
+  /** Remove sidecars whose owning log and live lifecycle are both absent. */
+  private async pruneDeletedRows(): Promise<void> {
+    await pruneUnknownSessionRows(
+      this.ctx.sessionPersistence,
+      this.ctx.sessions.list(),
+      this.requireTable(),
+    )
   }
 
   /** Require the exact finalized append-origin assistant message projection. */

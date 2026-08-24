@@ -51,12 +51,14 @@ A backend owns one medium (a file-tree root, a database file) and exposes option
 A domain is declared once by its owning package as a spec object — the single source of the domain's identity, layout, and record schemas (zod, so `z.infer` keeps consumer types un-duplicated):
 
 ```ts type-equiv
-/** Static declaration of one domain: identity, version, and record layout. */
+/** Static declaration of one domain: identity, version, record layout, and recovery policy. */
 interface DomainSpec {
   /** Domain name; must match `UNIT_NAME_RE` (doubles as the backend unit name). */
   readonly name: string
   /** Domain format version; a medium stamped with a different version rejects at open. */
   readonly version: number
+  /** Damage handling. `reject` is the default; `reset` is only for fully derived data. */
+  readonly recovery?: DomainRecovery
   /** Optional global singleton slot. */
   readonly global?: DomainGlobalSpec<unknown>
   /** Table declarations keyed by table name; each name must match `UNIT_NAME_RE`. */
@@ -122,7 +124,7 @@ interface DomainChangedBase {
 type DomainChanged = DomainChangedPut | DomainChangedDeleted
 ```
 
-`put` (inserts, overwrites, and global writes) carries the new snapshot in `value` — never the old value; a diffing consumer keeps its own previous snapshot. `deleted` is a tombstone with no value. The event is a notification, not a transaction participant: the commit point has passed at emission, so a synchronously throwing listener is contained with a logged warning rather than rejecting the already-durable write, and emitted values equal the in-memory state at emission. The event is in-process only; cross-process change push is a recorded limitation ([package README](../../packages/storage/storage-domain/README.md)).
+`put` (inserts, overwrites, and global writes) carries the new snapshot in `value` — never the old value; a diffing consumer keeps its own previous snapshot. `deleted` is a tombstone with no value. The event is a notification, not a transaction participant: the commit point has passed at emission, so a synchronously throwing listener is contained with a logged warning rather than rejecting the already-durable write, and emitted values equal the in-memory state at emission. The event is in-process only. The product launcher enforces one Host for each canonical `$DSH_HOME`, and reconnecting clients read current snapshots from it; direct multi-process embeddings need their own change synchronization ([package README](../../packages/storage/storage-domain/README.md)).
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -170,9 +172,12 @@ The mounted domain facility. Opens declared domains over routed backends; one fa
  * name that is already open (`already-open`); resolve the backend route
  * (`backend-not-found` passes through from the hub); require its `kv` facet
  * (`facet-unsupported`); open the unit projected from the spec (backend
- * `version-mismatch`/`malformed-medium` pass through); load and validate
- * every stored record against the spec's zod schemas (`invalid-record`
- * with the offending table and key); construct the domain.
+ * `version-mismatch`/`malformed-medium` pass through by default); load and
+ * validate every stored record against the spec's zod schemas
+ * (`invalid-record` with the offending table and key); construct the
+ * domain. A spec declaring `recovery: 'reset'` discards and reopens its
+ * unit once for those three damage failures only. Routing, capability,
+ * lifecycle, and I/O failures always propagate.
  *
  * Lifecycle: the CALLER owns the returned handle and closes it via
  * `Domain.close()` (typically as its own `ctx.effect` disposer) — the
@@ -201,7 +206,7 @@ get(name: string): DomainImpl | undefined
 async closeAll(): Promise<void>
 ```
 
-Source: [`packages/storage/storage-domain/src/index.ts:69`](../../packages/storage/storage-domain/src/index.ts)
+Source: [`packages/storage/storage-domain/src/index.ts:70`](../../packages/storage/storage-domain/src/index.ts)
 
 <a id="domain-events"></a>
 

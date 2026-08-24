@@ -2,9 +2,9 @@
 
 English | [中文](persistence.zh.md)
 
-The **durability seam** for the event log. [session.md](session.md) describes the in-memory `Session` — the append-only `SessionEvent` log that is the source of truth. This page describes how that log is made durable: the abstract `SessionPersistence` service, its backends, the flush checkpoint, crash recovery, and the metadata header that travels alongside the log. The event vocabulary the log carries is enumerated, member by member, in the generated [persistence log event catalog](../persistence-catalog.md).
+The **durability seam** for the event log. [session.md](session.md) describes the in-memory `Session` — the append-only `SessionEvent` log that is the source of truth. This page describes how that log is made durable and permanently removed: the abstract `SessionPersistence` service, its backends, the flush checkpoint, crash recovery, deletion lifecycle, and the metadata header that travels alongside the log. The event vocabulary the log carries is enumerated, member by member, in the generated [persistence log event catalog](../persistence-catalog.md).
 
-The seam is a [capability seam](../../.agents/notes/implemented/architecture/2026-06-13-capability-seams.md): one abstract service ([dsh-session-persistence](../../packages/session/session-persistence), `ctx.sessionPersistence`) defining locate/create/append, reusable Session preparation, logical load/inspect, physical suffix reads, and lightweight list/snapshot observation over the existing `SessionEvent` — **no parallel persisted event type** — and two interchangeable backends implementing the same contract. See the [session-persistence Agent Note](../../.agents/notes/implemented/architecture/2026-06-14-session-persistence.md).
+The seam is a [capability seam](../../.agents/notes/implemented/architecture/2026-06-13-capability-seams.md): one abstract service ([dsh-session-persistence](../../packages/session/session-persistence), `ctx.sessionPersistence`) defining locate/create/append/delete, reusable Session preparation, logical load/inspect, physical suffix reads, and lightweight list/snapshot observation over the existing `SessionEvent` — **no parallel persisted event type** — and two interchangeable backends implementing the same contract. See the [session-persistence Agent Note](../../.agents/notes/implemented/architecture/2026-06-14-session-persistence.md).
 
 ## The flush checkpoint
 
@@ -17,6 +17,10 @@ A backend that reloads a log crashed mid-turn finds an open `turn/start` with no
 Repair applies only to cold sessions. For a live id, `SessionPersistence.load(id)` waits until the authoritative in-memory snapshot is durable and returns it only when balanced; an open live turn rejects rather than receiving synthetic interruption boundaries. HMR adopts a live prefix without closing its active turn.
 
 `SessionPersistence.inspect(id)` constructs an immutable logical Session without publishing it or writing recovery. Cold inspection balances an interrupted turn in memory while leaving torn physical tails untouched; inspection of an already-live Session borrows its current immutable snapshot and may therefore contain an open turn. Coordinator-backed implementations retain the exact cold unpublished Session in a bounded LRU, so repeated history reads and a later `prepare(id)` share one read, decompression, validation, freeze, and Session construction. `prepare(id)` reserves the Session, commits pending repair, and returns a disposable publication handle; `load(id)` uses the same machinery to commit repair without publication. The [Session preparation decision](../../.agents/notes/implemented/architecture/2026-08-05-session-preparation.md) owns this lifecycle.
+
+## Permanent deletion and retention
+
+Archive is a reversible Workspace classification and retains the durable log indefinitely. `SessionPersistence.delete(id, signal?)` is the only permanent storage action. The coordinator rejects a live Session or an active resume preparation, serializes deletion with append, repair, and retirement, and emits `session-persistence/deleted` only after storage commits. Derived stores remove their records on that event and reconcile against the persistence catalog at startup, so a process stop between the authoritative deletion and cleanup leaves recoverable residue rather than a false Session. JSONL removes the transcript and its owned activity index while preserving unknown files; SQLite deletes the Session row and its event rows in one transaction. The complete Host/client recursive lifecycle is recorded in the [durable Session lifecycle decision](../../.agents/notes/implemented/architecture/2026-08-23-durable-session-lifecycle-and-retention.md).
 
 ## `SessionLocation` — optional per-session artifact target
 
@@ -223,6 +227,8 @@ type SessionPersistenceRevision = Branded<'SessionPersistenceRevision'>
 interface SessionPersistenceSnapshot {
   /** Detached metadata for one materialized session. */
   header: SessionHeader
+  /** Exact latest direct human-prompt time, or `null` before the first prompt. */
+  lastPromptAt: number | null
   /** Opaque source-qualified token that changes whenever this stored log changes. */
   revision: SessionPersistenceRevision
 }
@@ -230,7 +236,7 @@ interface SessionPersistenceSnapshot {
 
 ## The backends
 
-Both implement the same abstract `SessionPersistence` (locate/create/append/prepare/load/inspect/readFrom/list/listSnapshots over `SessionEvent`, with optional cancellation on observation methods) and pass the shared `runPersistenceContract` suite:
+Both implement the same abstract `SessionPersistence` (locate/create/append/delete/prepare/load/inspect/readFrom/list/listSnapshots over `SessionEvent`, with optional cancellation on observation methods) and pass the shared `runPersistenceContract` suite:
 
 - **[dsh-session-persistence-jsonl](../../packages/session/session-persistence-jsonl)** — an append-only logical JSONL log per session, stored as checksummed concatenated Zstandard frames by default or raw lines by configuration, with crash-safe atomic writes, interrupted-turn recovery, and a read/replay path.
 - **[dsh-session-persistence-sqlite](../../packages/session/session-persistence-sqlite)** — `node:sqlite`, one row per `SessionEvent`. The row fields `(session_id, seq, type, time, data, source_event_seqs, surface_op)` map 1:1 onto the event, including optional surface metadata, so there is no parallel persisted schema to keep in sync.
@@ -294,6 +300,18 @@ abstract create(meta: SessionHeader): Promise<void>
  * @param events - the contiguous batch to persist, in seq order.
  */
 abstract append(id: SessionId, events: readonly SessionEvent[]): Promise<void>
+
+/**
+ * Permanently remove one non-live session log. Operations for the same id
+ * remain serialized with append, repair, and retirement. Deleting a pending
+ * lazy create cancels that unpublished identity without creating storage;
+ * deleting an unknown id rejects. A post-commit
+ * `session-persistence/deleted` event asks derived stores to discard their
+ * records, while those stores also reconcile at startup after a crash.
+ * @param id - Session identity to remove.
+ * @param signal - Optional cancellation while queued before deletion starts.
+ */
+abstract delete(id: SessionId, signal?: AbortSignal): Promise<void>
 
 /**
  * Prepare the exact unpublished Session used by resume. Implementations may
@@ -381,5 +399,30 @@ abstract listSnapshots(signal?: AbortSignal): Promise<SessionPersistenceSnapshot
 
 Types: [SessionEvent](session.md) · [SessionId](core.md)
 
-Source: [`packages/session/session-persistence/src/index.ts:84`](../../packages/session/session-persistence/src/index.ts)
+Source: [`packages/session/session-persistence/src/index.ts:104`](../../packages/session/session-persistence/src/index.ts)
+
+<a id="session-persistence-events"></a>
+
+### `session-persistence/*` events
+
+<a id="session-persistencedeleted--emit"></a>
+
+#### `session-persistence/deleted` — emit
+
+A session identity left authoritative persistence. Consumers use this post-commit notification to discard derived records; startup reconciliation remains responsible for interrupted cleanup.
+
+```ts cordis-catalog
+/**
+ * A session identity left authoritative persistence. Consumers use this
+ * post-commit notification to discard derived records; startup
+ * reconciliation remains responsible for interrupted cleanup.
+ * @param sessionId - Deleted session identity.
+ * @mode emit
+ */
+'session-persistence/deleted'(sessionId: SessionId): void
+```
+
+Types: [SessionId](core.md)
+
+Source: [`packages/session/session-persistence/src/index.ts:82`](../../packages/session/session-persistence/src/index.ts)
 <!-- END GENERATED cordis-surface -->

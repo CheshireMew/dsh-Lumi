@@ -13,29 +13,25 @@
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-api-protocol'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
-import type { ApiProxy } from './api/index.ts'
-import { createApiProxy, DEFAULT_COLD_BLANK_PROBE_MAX_BYTES } from './api-proxy.ts'
+import type { ApiProxy } from '@deepseek-ai/dsh-api-protocol/api'
+import {
+  createApiProxy,
+  DEFAULT_COLD_SUMMARY_BATCH_SIZE,
+  DEFAULT_COLD_BLANK_PROBE_MAX_BYTES,
+  DEFAULT_SESSION_SEARCH_PROVIDER_CALL_LIMIT,
+  DEFAULT_SESSION_LIST_MAX_SNAPSHOTS,
+  DEFAULT_SESSION_LIST_SNAPSHOT_TTL_MS,
+} from './api-proxy.ts'
 import {
   DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
   type SessionLogCompressionLevel,
 } from './session-export.ts'
 
-export type * from './api/index.ts'
-export { RpcId } from './api/rpc.ts'
-export { toFetchHandler } from './fetch/handler.ts'
-export { AbstractApiClient, InProcessApiClient } from './fetch/client.ts'
-export type { IApiClient } from './fetch/client.ts'
 export { createApiProxy } from './api-proxy.ts'
 export type { ApiProxyDefaults } from './api-proxy.ts'
-
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    /** The host-side ApiProxy implementation (the transport-agnostic gateway face). */
-    apiProxy: ApiProxy
-  }
-}
 
 /** Gateway plugin configuration. */
 export interface Config {
@@ -59,6 +55,26 @@ export interface Config {
    * @default 1024
    */
   coldBlankProbeMaxBytes?: number
+  /**
+   * Maximum provider calls made by one session search.
+   * @default 100
+   */
+  sessionSearchProviderCallLimit?: number
+  /**
+   * Maximum cold-session summaries resolved concurrently.
+   * @default 16
+   */
+  coldSummaryBatchSize?: number
+  /**
+   * Lifetime of an incomplete `session.list` snapshot cursor.
+   * @default 60000
+   */
+  sessionListSnapshotTtlMs?: number
+  /**
+   * Maximum incomplete `session.list` observations retained in memory.
+   * @default 8
+   */
+  sessionListMaxSnapshots?: number
 }
 
 /**
@@ -77,6 +93,11 @@ export class ApiProxyService extends Service implements ApiProxy {
     sessionExportCompressionLevel: z.number().step(1).min(0).max(9)
       .default(DEFAULT_SESSION_LOG_COMPRESSION_LEVEL) as z<SessionLogCompressionLevel>,
     coldBlankProbeMaxBytes: z.natural().default(DEFAULT_COLD_BLANK_PROBE_MAX_BYTES),
+    sessionSearchProviderCallLimit: z.number().step(1).min(1)
+      .default(DEFAULT_SESSION_SEARCH_PROVIDER_CALL_LIMIT),
+    coldSummaryBatchSize: z.number().step(1).min(1).default(DEFAULT_COLD_SUMMARY_BATCH_SIZE),
+    sessionListSnapshotTtlMs: z.number().step(1).min(1).default(DEFAULT_SESSION_LIST_SNAPSHOT_TTL_MS),
+    sessionListMaxSnapshots: z.number().step(1).min(1).default(DEFAULT_SESSION_LIST_MAX_SNAPSHOTS),
   })
 
   readonly sessions: ApiProxy['sessions']
@@ -106,6 +127,18 @@ export class ApiProxyService extends Service implements ApiProxy {
       ...(config.coldBlankProbeMaxBytes === undefined
         ? {}
         : { coldBlankProbeMaxBytes: config.coldBlankProbeMaxBytes }),
+      ...(config.sessionSearchProviderCallLimit === undefined
+        ? {}
+        : { sessionSearchProviderCallLimit: config.sessionSearchProviderCallLimit }),
+      ...(config.coldSummaryBatchSize === undefined
+        ? {}
+        : { coldSummaryBatchSize: config.coldSummaryBatchSize }),
+      ...(config.sessionListSnapshotTtlMs === undefined
+        ? {}
+        : { sessionListSnapshotTtlMs: config.sessionListSnapshotTtlMs }),
+      ...(config.sessionListMaxSnapshots === undefined
+        ? {}
+        : { sessionListMaxSnapshots: config.sessionListMaxSnapshots }),
     })
     this.sessions = api.sessions
     this.subagents = api.subagents

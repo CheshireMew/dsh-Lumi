@@ -7,6 +7,7 @@
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
   'group.ungrouped': '未分组',
+  'group.archived': '已归档',
   'session.new': '新会话',
   'section.workspaces': '工作区',
   'section.sessions': '会话',
@@ -45,6 +46,10 @@ export const zh = {
   'delete.pending': '正在删除工作区…',
   'menu.fork': '分叉会话',
   'menu.archiveSession': '归档会话',
+  'menu.unarchiveSession': '恢复会话',
+  'delete.session': '永久删除会话',
+  'delete.session.desc': '将永久删除“{name}”及其所有子会话的记录。此操作无法撤销。',
+  'delete.session.pending': '正在删除会话…',
   'sessions.count.one': '{n} 个会话',
   'sessions.count.other': '{n} 个会话',
   'actions.workspace.aria': '工作区“{name}”的操作',
@@ -76,6 +81,7 @@ export type WorkspaceKey = keyof typeof zh
 /** English dictionary, checked complete against the zh key set. */
 export const en = {
   'group.ungrouped': 'Ungrouped',
+  'group.archived': 'Archived',
   'session.new': 'New Session',
   'section.workspaces': 'Workspaces',
   'section.sessions': 'Sessions',
@@ -114,6 +120,10 @@ export const en = {
   'delete.pending': 'Deleting workspace…',
   'menu.fork': 'Fork session',
   'menu.archiveSession': 'Archive session',
+  'menu.unarchiveSession': 'Restore session',
+  'delete.session': 'Delete session permanently',
+  'delete.session.desc': 'This permanently deletes “{name}” and every descendant session log. This cannot be undone.',
+  'delete.session.pending': 'Deleting session…',
   'sessions.count.one': '{n} session',
   'sessions.count.other': '{n} sessions',
   'actions.workspace.aria': 'Workspace actions for {name}',

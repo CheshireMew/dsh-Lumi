@@ -54,7 +54,8 @@ function fakePersistence(logs: Map<string, SessionEvent[]>) {
       events: events.filter(event => event.seq >= fromSeq),
     }
   })
-  return { readFrom }
+  const list = vi.fn(async () => [...logs.keys()].map(id => headerOf(SessionId(id))))
+  return { readFrom, list }
 }
 
 /** Header shape for cachedSnapshot calls (fake logs stamp createdAt 0, no cwd). */
@@ -218,6 +219,38 @@ describe('SessionProjectionCache write policy', () => {
   })
 })
 
+describe('SessionProjectionCache deletion cleanup', () => {
+  it('removes an interrupted deletion residue during startup reconciliation', async () => {
+    const pool = new MemoryMediaPool()
+    pool.versions.set('session_projcache', 3)
+    pool.media.set('session_projcache', {
+      tables: new Map([['sessions', new Map([['ghost', {
+        identity: { createdAt: 0 },
+        rows: { 'cache-test/marks': { ver: 1, seq: 0, val: { marks: ['stale'] } } },
+      }]])]]),
+      global: null,
+    })
+
+    await harness({ pool })
+
+    expect(storedRecord(pool, SessionId('ghost'))).toBeUndefined()
+  })
+
+  it('removes a row after authoritative persistence emits deletion', async () => {
+    const { ctx, pool } = await harness()
+    const session = ctx.sessions.create(SessionId('delete-cache-row'))
+    mark(session, ['stored'])
+    endTurn(session)
+    await settle()
+    expect(storedRecord(pool, session.id)).toBeDefined()
+
+    ctx.emit('session-persistence/deleted', session.id)
+    await settle()
+
+    expect(storedRecord(pool, session.id)).toBeUndefined()
+  })
+})
+
 describe('SessionProjectionCache cold read', () => {
   const storedLog = (marks: string[][]): SessionEvent[] => {
     const events: SessionEvent[] = [
@@ -318,14 +351,14 @@ describe('SessionProjectionCache cold read', () => {
   it('cachedSnapshot returns undefined when every stored row is version-mismatched', async () => {
     const pool = new MemoryMediaPool()
     seedRow(pool, 'all-stale', { ver: 99, seq: 4, val: { marks: ['old'] } })
-    const { cache } = await harness({ pool })
+    const { cache } = await harness({ pool, logs: new Map([['all-stale', []]]) })
     expect(cache.cachedSnapshot(headerOf(SessionId('all-stale')))).toBeUndefined()
   })
 
   it('binds identity on cwd too: a matching cwd serves, a moved session does not', async () => {
     const pool = new MemoryMediaPool()
     seedRow(pool, 'homed', { ver: 1, seq: 2, val: { marks: ['w'] } }, { createdAt: 0, cwd: '/work' })
-    const { cache } = await harness({ pool })
+    const { cache } = await harness({ pool, logs: new Map([['homed', []]]) })
     const id = SessionId('homed')
     expect(cache.cachedSnapshot(headerOf(id, 0, '/work'))?.values['cache-test/marks']).toEqual({ marks: ['w'] })
     expect(cache.cachedSnapshot(headerOf(id, 0, '/elsewhere'))).toBeUndefined()
@@ -353,7 +386,7 @@ describe('SessionProjectionCache cold read', () => {
   it('cachedSnapshot serves identity-matching rows with the cut watermark and refuses unrelated ones', async () => {
     const pool = new MemoryMediaPool()
     seedRow(pool, 'listed', { ver: 1, seq: 4, val: { marks: ['t'] } })
-    const { cache } = await harness({ pool })
+    const { cache } = await harness({ pool, logs: new Map([['listed', []]]) })
     const id = SessionId('listed')
     // Matching header: values plus the watermark the client seeds under.
     expect(cache.cachedSnapshot(headerOf(id))).toEqual({ asOfSeq: 4, values: { 'cache-test/marks': { marks: ['t'] } } })

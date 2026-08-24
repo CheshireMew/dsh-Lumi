@@ -1,7 +1,7 @@
 import { MessageId, createUserMessage, createMessage } from '@deepseek-ai/dsh-llm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { appendFile, mkdtemp, mkdir, rm, readFile, writeFile, readdir, stat, symlink } from 'node:fs/promises'
+import { appendFile, mkdtemp, mkdir, rename, rm, readFile, writeFile, readdir, stat, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
@@ -395,6 +395,29 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
 
     await reopenedCtx.fiber.dispose()
     await otherCtx.fiber.dispose()
+  })
+
+  it('rebuilds an absent, malformed, or integrity-damaged activity index from the stable log', async () => {
+    const m = meta('activity-index', '/work')
+    await ctx.sessionPersistence.create(m)
+    await ctx.sessionPersistence.append(m.id, oneTurnLog())
+    const indexPath = join(sessionDir(root, m.cwd, m.id), 'session.index.json')
+
+    await rename(indexPath, `${indexPath}.pre-index`)
+    const rebuilt = (await ctx.sessionPersistence.listSnapshots())[0]
+    expect(rebuilt?.lastPromptAt).toBe(2)
+
+    await writeFile(indexPath, '{')
+    expect((await ctx.sessionPersistence.listSnapshots())[0]?.lastPromptAt).toBe(2)
+
+    const index = JSON.parse(await readFile(indexPath, 'utf8')) as Record<string, unknown>
+    await writeFile(indexPath, `${JSON.stringify({ ...index, lastPromptAt: 999 })}\n`)
+    expect((await ctx.sessionPersistence.listSnapshots())[0]?.lastPromptAt).toBe(2)
+    expect(JSON.parse(await readFile(indexPath, 'utf8'))).toMatchObject({
+      version: 1,
+      revision: rebuilt?.revision,
+      lastPromptAt: 2,
+    })
   })
 
   it('binds a full stored prefix to the same revision as a lightweight read', async () => {
@@ -1594,6 +1617,24 @@ describe('JsonlSessionPersistence: edge cases', () => {
     await expect(ctx.sessionPersistence.append(m.id, bad(circ))).rejects.toThrow(/non-JSON-serializable/)
     // The session was never materialized by any of the rejected appends.
     expect((await ctx.sessionPersistence.list()).map(h => h.id)).not.toContain(m.id)
+  })
+
+  it('deletes backend-owned files while retaining unknown session-directory artifacts', async () => {
+    const m = meta('delete-retains-unknown', '/work')
+    await ctx.sessionPersistence.create(m)
+    await ctx.sessionPersistence.append(m.id, oneTurnLog())
+    const dir = sessionDir(root, m.cwd, m.id)
+    const log = rawLogPath(root, m.cwd, m.id)
+    const index = join(dir, 'session.index.json')
+    const diagnostic = join(dir, 'diagnostic.txt')
+    await writeFile(diagnostic, 'retain me')
+
+    await ctx.sessionPersistence.delete(m.id)
+
+    await expect(stat(log)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(index)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(diagnostic, 'utf8')).toBe('retain me')
+    expect(await readdir(dir)).toEqual(['diagnostic.txt'])
   })
 
   it('accepts well-formed JSON values (null, booleans, nested arrays/objects)', async () => {

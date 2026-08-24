@@ -8,7 +8,8 @@ import { z } from 'zod'
 import {
   contentBlockSchema, sessionCancelRequestSchema, sessionCancelValueSchema, sessionCreateRequestSchema,
   sessionCreateValueSchema, sessionEventSchema, sessionHistoryRequestSchema, sessionHistoryValueSchema,
-  sessionIdSchema, sessionListRequestSchema, sessionListValueSchema, sessionModelsRequestSchema,
+  sessionDeleteRequestSchema, sessionDeleteValueSchema, sessionIdSchema,
+  sessionListRequestSchema, sessionListValueSchema, sessionModelsRequestSchema,
   sessionModelsValueSchema, sessionPromptRequestSchema, sessionPromptValueSchema,
   sessionSearchRequestSchema, sessionSearchValueSchema, sessionSelectModelRequestSchema,
   sessionSelectModelValueSchema, sessionSummarySchema,
@@ -27,6 +28,7 @@ import {
   workspaceInsertSessionBeforeRequestSchema, workspaceInsertSessionBeforeValueSchema,
   workspaceListRequestSchema, workspaceListValueSchema,
   workspaceRenameRequestSchema, workspaceRenameValueSchema, workspaceViewSchema,
+  workspaceUnarchiveSessionRequestSchema, workspaceUnarchiveSessionValueSchema,
 } from '../src/api/workspace.schema.ts'
 import { skillEntrySchema, skillListRequestSchema, skillListValueSchema } from '../src/api/skills.schema.ts'
 import {
@@ -60,6 +62,7 @@ describe('rpcErrorSchema', () => {
     expect(rpcErrorSchema.parse({ code: 'bad-request', message: 'm', details: { issues: [] } }).code).toBe('bad-request')
     expect(rpcErrorSchema.parse({ code: 'cancelled', message: 'm', details: {} }).code).toBe('cancelled')
     expect(rpcErrorSchema.parse({ code: 'session-not-found', message: 'm', details: { sessionId: 's' } }).code).toBe('session-not-found')
+    expect(rpcErrorSchema.parse({ code: 'session-list-cursor-stale', message: 'm', details: {} }).code).toBe('session-list-cursor-stale')
     expect(rpcErrorSchema.parse({ code: 'session-conflict', message: 'm', details: { sessionId: 's', requestedCwd: '/a', existingCwd: '/b' } }).code).toBe('session-conflict')
     expect(rpcErrorSchema.parse({ code: 'invalid-time-zone', message: 'm', details: { value: 'CST' } }).code).toBe('invalid-time-zone')
     expect(rpcErrorSchema.parse({ code: 'workspace-attach-failed', message: 'm', details: { sessionId: 's', workspaceId: 'w' } }).code).toBe('workspace-attach-failed')
@@ -160,7 +163,13 @@ describe('sessions domain schemas', () => {
   it('validates the per-method request/value pairs', () => {
     expect(sessionListRequestSchema.parse({})).toEqual({})
     expect(sessionListRequestSchema.parse({ cursor: 'c' }).cursor).toBe('c')
+    expect(() => sessionListRequestSchema.parse({ cursor: '' })).toThrow()
+    expect(() => sessionListRequestSchema.parse({ cursor: 'x'.repeat(2049) })).toThrow()
+    expect(() => sessionListRequestSchema.parse({ limit: 101 })).toThrow()
     expect(sessionListValueSchema.parse({ items: [] }).items).toEqual([])
+    expect(sessionDeleteRequestSchema.parse({ sessionId: 's1', recursive: true }).recursive).toBe(true)
+    expect(sessionDeleteValueSchema.parse({ deletedSessionIds: ['s2', 's1'] }).deletedSessionIds)
+      .toEqual(['s2', 's1'])
     expect(sessionSearchRequestSchema.parse({ query: '  exact phrase  ' })).toEqual({ query: 'exact phrase' })
     expect(() => sessionSearchRequestSchema.parse({ query: '   ' })).toThrow()
     expect(() => sessionSearchRequestSchema.parse({ query: 'bad\0query' })).toThrow(/NUL/)
@@ -366,6 +375,8 @@ describe('workspace domain schemas', () => {
     expect(workspaceArchiveSessionValueSchema.parse({ archivedSessionIds: ['s1', 's2'] }).archivedSessionIds)
       .toEqual(['s1', 's2'])
     expect(() => workspaceArchiveSessionValueSchema.parse({ archivedSessionIds: 's1' })).toThrow()
+    expect(workspaceUnarchiveSessionRequestSchema.parse({ sessionId: 's1' }).sessionId).toBe('s1')
+    expect(workspaceUnarchiveSessionValueSchema.parse({ archivedSessionIds: [] }).archivedSessionIds).toEqual([])
   })
 
   it('insertSessionBefore accepts an anchored and an anchorless move', () => {
@@ -515,6 +526,7 @@ describe('events frame schemas', () => {
       { type: 'host/session-added', sessionId: 's', blank: true, parentSessionId: 'p' },
       { type: 'host/session-added', sessionId: 's', blank: true },
       { type: 'host/session-removed', sessionId: 's' },
+      { type: 'host/session-deleted', sessionId: 's' },
       { type: 'host/session-status', sessionId: 's', running: true },
       { type: 'host/agent-error', sessionId: 's', message: 'boom' },
       { type: 'host/workspace-changed', workspace: {

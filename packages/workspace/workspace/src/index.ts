@@ -125,18 +125,24 @@ export class WorkspaceRegistry extends Service {
 
     await this.recoverPendingMutation()
     this.validateStoredState(this.state)
+    const headers = await this.ctx.sessionPersistence.list()
     if (!this.state.initialized) {
-      const headers = await this.ctx.sessionPersistence.list()
       await this.replaceHeaderIndex(headers)
       await this.bootstrap(headers)
-    } else if (this.table.size > 0) {
-      await this.replaceHeaderIndex(await this.ctx.sessionPersistence.list())
+    } else {
+      await this.replaceHeaderIndex(headers)
     }
 
     await this.indexLiveSessions()
+    await this.reconcileDeletedSessions()
     this.validateStoredState(this.requireState())
     this.rebuildEntities()
     this.reportFilteredCandidates()
+    this.ctx.on('session-persistence/deleted', (sessionId: SessionId) => {
+      void this.enqueueOperation(() => this.forgetDeletedSession(sessionId)).catch((error: unknown) => {
+        this.ctx.logger.warn(`workspace registry: failed to remove deleted session '${sessionId}': ${String(error)}`)
+      })
+    })
   }
 
   /**
@@ -251,6 +257,23 @@ export class WorkspaceRegistry extends Service {
       }
       const state = this.requireState()
       await this.setState({ ...state, archivedSessionIds: [...state.archivedSessionIds, sessionId] })
+    })
+  }
+
+  /**
+   * Restore one archived session to every normal grouping surface. Unknown or
+   * already-visible ids are idempotent because only archive membership changes.
+   * @param sessionId - Session identity to restore.
+   * @returns resolution after durability.
+   */
+  unarchiveSession(sessionId: SessionId): Promise<void> {
+    return this.enqueueOperation(async () => {
+      const state = this.requireState()
+      if (!state.archivedSessionIds.includes(sessionId)) return
+      await this.setState({
+        ...state,
+        archivedSessionIds: state.archivedSessionIds.filter(id => id !== sessionId),
+      })
     })
   }
 
@@ -593,6 +616,49 @@ export class WorkspaceRegistry extends Service {
     const sessions = this.ctx.get('sessions')
     if (sessions === undefined) return
     await this.indexHeaders(sessions.list().map(session => session.header))
+  }
+
+  /** Remove interrupted deletion residue after rebuilding the authority index. */
+  private async reconcileDeletedSessions(): Promise<void> {
+    const known = new Set(this.headers.keys())
+    const table = this.requireTable()
+    for (const [workspaceId, record] of table.entries()) {
+      const sessionIds = record.sessionIds.filter(id => known.has(id))
+      if (sessionIds.length !== record.sessionIds.length) {
+        await table.put(workspaceId, { ...record, sessionIds })
+      }
+    }
+    const state = this.requireState()
+    const archivedSessionIds = state.archivedSessionIds.filter(id => known.has(id))
+    if (archivedSessionIds.length !== state.archivedSessionIds.length) {
+      await this.setState({ ...state, archivedSessionIds })
+    }
+  }
+
+  /** Remove one deleted identity from every workspace-owned derived record. */
+  private async forgetDeletedSession(sessionId: SessionId): Promise<void> {
+    this.headers.delete(sessionId)
+    this.sessionPaths.delete(sessionId)
+    this.invalidSessionPaths.delete(sessionId)
+    const table = this.requireTable()
+    let changed = false
+    for (const [workspaceId, record] of table.entries()) {
+      if (!record.sessionIds.includes(sessionId)) continue
+      await table.put(workspaceId, {
+        ...record,
+        sessionIds: record.sessionIds.filter(id => id !== sessionId),
+      })
+      changed = true
+    }
+    const state = this.requireState()
+    if (state.archivedSessionIds.includes(sessionId)) {
+      await this.setState({
+        ...state,
+        archivedSessionIds: state.archivedSessionIds.filter(id => id !== sessionId),
+      })
+      changed = true
+    }
+    if (changed) this.rebuildEntities()
   }
 
   private reportFilteredCandidates(): void {

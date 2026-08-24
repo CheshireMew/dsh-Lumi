@@ -22,7 +22,7 @@ pnpm run start:lumi
 
 桌面版和 CLI 解析同一个 `$DSH_HOME`；没有设置该变量时，两者都使用 `~/.dsh`。桌面版只会在 `lumi-desktop` profile 不存在时，用 `@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app` 和 `@dsh-lumi/bundle-desktop` 初始化它。因此会话、模型配置、凭据、工作区、插件和设置在两个界面中都可见。桌面日志位于 `$DSH_HOME/logs/lumi-desktop`，本机 Crashpad 转储位于 `$DSH_HOME/crashes/lumi-desktop`，角色包位于 `$DSH_HOME/lumi/packs`，Electron 窗口位置保存在 Electron `userData` 中。
 
-不要让两个独立的持久 Web Host 同时使用同一个 `$DSH_HOME`。Electron 会强制应用单实例，第二次启动只会恢复并聚焦已有窗口。浏览器可以打开已经运行的 Lumi Host URL，因为这不会创建第二个 Host。
+桌面版和每次 `dsh --profile` 启动都会强制每个规范化 `$DSH_HOME` 只能由一个 Host 使用。第二个 Host 会在接触 profile 或 home 文件之前被拒绝，并报告当前占用者的 PID、profile 和启动时间；此时应停止该 Host 或选择另一 home。Electron 还会强制应用单实例，因此第二次启动桌面版只会恢复并聚焦已有窗口。浏览器可以打开已经运行的 Lumi Host URL，因为这不会创建第二个 Host。
 
 ## 界面、语音与默契度
 

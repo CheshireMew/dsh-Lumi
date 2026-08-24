@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/proposed/architecture/2026-07-24-domain-kv-storage-and-workspace.md
-2026-07-24-domain-kv-storage-and-workspace.md: ff0db847f6f15130d38a3a001daf8b129311f3a3
-2026-07-24-domain-kv-storage-and-workspace.zh.md: 4aff51448103367a6d3340ea9cd046b9edbd22a3
+2026-07-24-domain-kv-storage-and-workspace.md: af4e2084ce9f47df296e7cd8d8d167881396ef83
+2026-07-24-domain-kv-storage-and-workspace.zh.md: a8539c578e2ac1c48466d0bba58e5fcebcb31fae

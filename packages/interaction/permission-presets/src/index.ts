@@ -209,6 +209,7 @@ export class PermissionPresetService extends Service {
       defaultPreset: z.union(presetChoices).required(),
     })
     installSettingsSection(ctx, PERMISSION_SETTINGS_NAMESPACE, settingsSchema, baseSettings, {
+      surfaces: ['configuration-client'],
       setSource: (current) => {
         this.defaultSettings = current
       },

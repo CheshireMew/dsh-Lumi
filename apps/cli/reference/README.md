@@ -12,6 +12,8 @@ Bundle names resolve from the dsh installation first, then from the profile dire
 
 The `web` and `headless` profiles auto-initialize from shipped templates on first use (`web`: base + web-app; `headless`: base + headless). Any other missing profile fails loud with a hint to run `dsh plugin --profile <name> add <package>`.
 
+Before profile composition, initialization, fallback-link healing, or home configuration reads, the launcher acquires exclusive Host ownership of the canonical `$DSH_HOME`. Another profile boot against the same home exits nonzero and identifies the live owner's PID, profile, and start time. Different homes may run concurrently. The operating system releases ownership after a crash; normal and fail-loud shutdown release it only after the plugin tree has disposed. Losing the ownership endpoint while the Host is live is fatal. Plugin management and config dumps do not mount a Host and do not acquire ownership.
+
 ### App arguments
 
 The launcher's flags come first and end at the first token it does not recognize; everything from there on is handed to the booted profile verbatim through `ctx.cmdlineArgs`, where any injected app plugin may parse it ([`dsh-cmdline`](../../../packages/boot/cmdline/README.md)). `dsh --profile web --port 8080` therefore reaches the web app's `--port`, `dsh --profile web --help` prints that app's help and boots nothing, and `dsh --help` (no profile to hand it to) prints the launcher's own. `-V`/`--version` prints the launcher's version when it appears before the app-argument boundary.

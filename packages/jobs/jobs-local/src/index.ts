@@ -4,8 +4,9 @@
  * snapshots, never live state.
  *
  * Registrations outlive producer and controller fibers. Agent or service
- * disposal cancels live work and awaits compliant producers; a throwing
- * teardown cancel force-fails only the record and reports a possible orphan.
+ * disposal cancels live work and awaits compliant producers. A throwing cancel
+ * or an elapsed cancellation deadline force-fails only the record and reports
+ * a possible orphan.
  * @module @deepseek-ai/dsh-jobs-local
  */
 
@@ -14,7 +15,7 @@ import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { AnonymousEntries, ScopedLayers, scopeOf } from '@deepseek-ai/dsh-scope'
 import type { ScopeLayer } from '@deepseek-ai/dsh-scope'
-import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
+import { deadline, MAX_TIMER_DELAY_MS, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import { JobRegistry, JobId } from '@deepseek-ai/dsh-jobs'
 import type {
   JobDoneListener, JobKind, JobOutcome, JobRead, JobSnapshot, JobStart, JobStatus,
@@ -27,6 +28,9 @@ export const TASK_WAIT_TIMEOUT = 'TASK_WAIT_TIMEOUT'
 /** Default maximum number of active jobs in one exact-owner bucket. */
 const DEFAULT_MAX_CONCURRENT_TASKS_PER_OWNER = 10
 
+/** Default grace period for a cancelled producer to settle its `done` promise. */
+const DEFAULT_CANCELLATION_TIMEOUT_MS = 30_000
+
 /** Configuration for the process-local job registry. */
 export interface Config {
   /**
@@ -34,6 +38,11 @@ export interface Config {
    * omission defaults to 10.
    */
   maxConcurrentJobsPerOwner?: number
+  /**
+   * Maximum time a producer may remain `stopping` after cancellation before
+   * its record is force-failed and capacity is released; omission defaults to 30 seconds.
+   */
+  cancellationTimeoutMs?: number
 }
 
 /** The registry's mutable per-job record (never handed out — see {@link LocalJobRegistry.snapshot}). */
@@ -60,6 +69,8 @@ interface TrackedTask {
   waiters: number
   /** Removable resolvers for live waits; timeout/abort unregister before the job settles. */
   waitResolvers: Set<() => void>
+  /** Armed only while cancellation is awaiting producer settlement. */
+  cancellationDeadline: ReturnType<typeof setTimeout> | undefined
 }
 
 /** True for the three terminal {@link JobStatus} values. */
@@ -95,10 +106,17 @@ export class LocalJobRegistry extends JobRegistry {
       .min(1)
       .max(Number.MAX_SAFE_INTEGER)
       .default(DEFAULT_MAX_CONCURRENT_TASKS_PER_OWNER),
+    cancellationTimeoutMs: z.number()
+      .step(1)
+      .min(1)
+      .max(MAX_TIMER_DELAY_MS)
+      .default(DEFAULT_CANCELLATION_TIMEOUT_MS),
   })
 
   /** Schemastery-defaulted active-job limit. */
   private readonly maxConcurrentJobsPerOwner: number
+  /** Schemastery-defaulted grace period for producer cancellation. */
+  private readonly cancellationTimeoutMs: number
   private store = new Map<JobId, TrackedTask>()
   private counters = new Map<string, number>()
   /**
@@ -123,7 +141,9 @@ export class LocalJobRegistry extends JobRegistry {
   constructor(ctx: Context, config: Config) {
     super(ctx)
     // Schemastery validates and fills the default before constructing the service.
-    this.maxConcurrentJobsPerOwner = (config as Required<Config>).maxConcurrentJobsPerOwner
+    const resolved = config as Required<Config>
+    this.maxConcurrentJobsPerOwner = resolved.maxConcurrentJobsPerOwner
+    this.cancellationTimeoutMs = resolved.cancellationTimeoutMs
     this.selfCtx = ctx
     ctx.effect(() => () => this.disposeAll(), 'jobs teardown')
   }
@@ -172,6 +192,7 @@ export class LocalJobRegistry extends JobRegistry {
       markSettled,
       waiters: 0,
       waitResolvers: new Set(),
+      cancellationDeadline: undefined,
     }
     this.store.set(id, job)
 
@@ -219,11 +240,13 @@ export class LocalJobRegistry extends JobRegistry {
       job.reported = true
       return 'already-finished'
     }
+    if (job.status === 'stopping') return 'requested'
     // Cancel first so a throw leaves both lifecycle and notice state unchanged.
     job.cancel(reason)
     job.status = 'stopping'
     job.reported = true
     this.notifyChanged(job.owner)
+    this.armCancellationDeadline(job)
     return 'requested'
   }
 
@@ -415,6 +438,10 @@ export class LocalJobRegistry extends JobRegistry {
    */
   private settle(job: TrackedTask, outcome: JobOutcome): void {
     if (isTerminal(job.status)) return
+    if (job.cancellationDeadline !== undefined) {
+      clearTimeout(job.cancellationDeadline)
+      job.cancellationDeadline = undefined
+    }
     job.status = outcome.status
     job.detail = outcome.detail
     job.output = outcome.output
@@ -437,6 +464,23 @@ export class LocalJobRegistry extends JobRegistry {
         this.selfCtx.logger.warn(`jobs: onJobDone listener threw for ${job.id}: ${String(error)}`)
       }
     }
+  }
+
+  /**
+   * Bound one successful cancellation request. Expiry settles only the registry
+   * record: a producer that ignored cancellation may still own external work,
+   * which the terminal detail and warning state explicitly.
+   */
+  private armCancellationDeadline(job: TrackedTask): void {
+    if (isTerminal(job.status) || job.cancellationDeadline !== undefined) return
+    job.cancellationDeadline = setTimeout(() => {
+      job.cancellationDeadline = undefined
+      if (isTerminal(job.status)) return
+      const detail = `cancellation did not settle within ${this.cancellationTimeoutMs}ms; producer work may be orphaned`
+      this.selfCtx.logger.warn(`jobs: ${job.id} ${detail}; job record forced failed`)
+      this.settle(job, { status: 'failed', detail })
+    }, this.cancellationTimeoutMs)
+    job.cancellationDeadline.unref()
   }
 
   /**
@@ -475,8 +519,8 @@ export class LocalJobRegistry extends JobRegistry {
   }
 
   /**
-   * Close listeners, cancel live jobs, await settlement, and detach owner
-   * effects. Throwing cancels are force-failed to avoid teardown deadlock.
+   * Close listeners, cancel live jobs, await bounded settlement, and detach
+   * owner effects. Throwing or ineffective cancels cannot deadlock teardown.
    */
   private async disposeAll(): Promise<void> {
     // The flag is the whole guard: each layer entry's undo belongs to the fiber
@@ -501,8 +545,8 @@ export class LocalJobRegistry extends JobRegistry {
 
   /**
    * Cancel jobs during teardown with per-job containment. A throwing cancel
-   * force-fails the record and reports a possible orphan; a cancel that returns
-   * without settling remains indistinguishable from a slow stop and may stall.
+   * force-fails immediately; a successful cancel receives the configured grace
+   * period before the same contained failure.
    */
   private cancelForTeardown(jobs: TrackedTask[], reason: string): void {
     for (const job of jobs) {
@@ -515,6 +559,10 @@ export class LocalJobRegistry extends JobRegistry {
       // record too, so a throwing cancel must not be the one path that
       // announces an unreported completion into a disposing owner.
       job.reported = true
+      if (job.status === 'stopping') {
+        this.armCancellationDeadline(job)
+        continue
+      }
       try {
         job.cancel(reason)
         job.status = 'stopping'
@@ -522,6 +570,7 @@ export class LocalJobRegistry extends JobRegistry {
         // slow stop can defer; announcing the transition here is what keeps an
         // observer from showing `running` for that whole window.
         this.notifyChanged(job.owner)
+        this.armCancellationDeadline(job)
       } catch (error: unknown) {
         const detail = `cancel threw during teardown; work may be orphaned: ${String(error)}`
         this.selfCtx.logger.warn(`jobs: cancel of ${job.id} threw during teardown; job record forced failed and work may be orphaned: ${String(error)}`)

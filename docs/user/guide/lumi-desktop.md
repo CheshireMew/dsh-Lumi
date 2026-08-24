@@ -22,7 +22,7 @@ pnpm run start:lumi
 
 The desktop and CLI resolve the same `$DSH_HOME`; when the variable is absent, both use `~/.dsh`. The desktop initializes the `lumi-desktop` profile with `@deepseek-ai/dsh-base`, `@deepseek-ai/dsh-web-app`, and `@dsh-lumi/bundle-desktop` only when that profile is absent. Sessions, model configuration, credentials, workspaces, plugins, and settings therefore remain visible to both interfaces. Desktop logs live under `$DSH_HOME/logs/lumi-desktop`, local Crashpad dumps under `$DSH_HOME/crashes/lumi-desktop`, character packs under `$DSH_HOME/lumi/packs`, and Electron window placement in Electron `userData`.
 
-Do not run two independent persistent Web Hosts against the same `$DSH_HOME`. Electron enforces one application instance, and a second launch restores and focuses the existing window. A browser may open the already-running Lumi Host URL because that does not create another Host.
+The desktop and every `dsh --profile` launch enforce one Host for each canonical `$DSH_HOME`. A second Host is rejected before profile or home files are touched and reports the current owner's PID, profile, and start time; stop that Host or select another home. Electron additionally enforces one application instance, so a second desktop launch restores and focuses the existing window. A browser may open an already-running Lumi Host URL because that does not create another Host.
 
 ## Interface, speech, and bond progress
 

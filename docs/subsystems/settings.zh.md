@@ -17,7 +17,12 @@ type SettingsNamespace = Branded<'SettingsNamespace'>
 
 ## 注册
 
-注册把 schemastery schema 绑定到调用方插件 fiber 上的 namespace——dispose（资源释放）该 fiber 即移除 namespace 及其观察者。options 携带组合层、owner 的生效时机，以及一个可选的、用于校验 schema 表达不了的约束的钩子。
+注册把 Schemastery schema 绑定到调用方插件 fiber 上的 namespace。dispose（资源释放）该 fiber 时，系统会停用其观察者、等待已经启动的回调，并移除 namespace。已经进入提供方持久化的写入仍会完成；如果替代注册方此时拥有该 namespace，它会从最终提交的分节重新解析。options 携带组合层、owner 的生效时机，以及一个可选的、用于校验 schema 表达不了的约束的钩子。
+
+```ts type-equiv
+/** Configuration surfaces a namespace owner may explicitly opt into. */
+type SettingsSurface = 'configuration-client'
+```
 
 ```ts type-equiv
 /** Registration options beyond the namespace schema. */
@@ -26,6 +31,8 @@ interface SettingsRegisterOptions<T> {
   base?: Partial<T>
   /** Owner's effect timing, surfaced to configuration UIs; defaults to `live`. */
   applies?: SettingsApplies
+  /** Configuration surfaces allowed to read and write this namespace. */
+  surfaces?: readonly SettingsSurface[]
   /**
    * Reject a resolved section the owner could not act on, for constraints its
    * schema cannot express — a cross-field requirement, or one field's validity
@@ -49,7 +56,7 @@ interface SettingsRegisterOptions<T> {
 }
 ```
 
-`validate` 在 schema 接纳该值之后运行，因此它看到的默认值和组合 base 与 owner 实际看到的完全一致。`dsh-llm-pi-ai` 用它在写入处拒绝自己无法服务的提供方 profile，而不是先存下来、再让该 namespace 下每条路由失效。
+`surfaces` 让客户端暴露范围由 owner 决定。Host 调用 `namespacesFor('configuration-client')`，只暴露明确选择加入的注册项，因此增删可配置插件时不会留下第二份过期的 Host 允许列表。`validate` 在 schema 接纳该值之后运行，因此它看到的默认值和组合 base 与 owner 实际看到的完全一致。`dsh-llm-pi-ai` 用它在写入处拒绝自己无法服务的提供方 profile，而不是先存下来、再让该 namespace 下每条路由失效。
 
 `applies` 是 UI 提示而非机制：`restart` 的 owner 只是从不 watch，其值在构造期读取一次，配置界面可为待生效变更加标。
 
@@ -72,7 +79,8 @@ interface SettingsScope<T> {
    * of one callback run asynchronously, one at a time, in commit order; a
    * rejection is contained and logged like a sync throw. After the disposer
    * returns, no further invocation starts — one already queued is skipped;
-   * one already started still settles, and service disposal waits for it.
+   * one already started still settles. Registrant and service disposal both
+   * wait for started invocations they own.
    * @param callback - invoked after each commit with the next and previous values.
    * @returns the disposer removing this observer.
    */
@@ -95,7 +103,7 @@ interface SettingsScope<T> {
 
 ## 描述符
 
-`describe()` 为配置界面序列化每个已注册 namespace：schemastery 的 `toJSON()` 封装结构驱动 schema 渲染的表单，解析值填充表单，分离出的 `base`/`user` 层让表单按字段是否出现在 user 层标注「用户已覆盖」。`describe({ redactSecrets: true })`——每个对外传输接口都必须传入——从三层剥离 `role('secret')` 字段并枚举其 `{path, set}` slot，页面因此能渲染只写输入框而永远收不到机密值。
+`describe()` 返回仅限同进程使用的原值 descriptor：Schemastery `toJSON()` 信封、解析值，以及分离出的 `base`／`user` 层。`describeForWire()` 是独立的默认拒绝不确定内容的客户端接口。它只保留 schema 可以证明安全的 JSON 字段，把 transform 与未知 schema 节点整体设为不透明内容，从三层值中移除 `role('secret')` 字段，清除序列化 schema 中的机密字面值，并枚举 `{path, set}` slot，使页面能在不接收机密的前提下渲染只写输入框。ApiProxy 只使用该方法，并为 schema 或提供方写入失败返回不含值的文本。
 
 ```ts type-equiv
 /** One registered namespace as surfaced to configuration UIs. */
@@ -120,7 +128,7 @@ interface SettingsDescriptor {
   user?: unknown
   /** Owner's declared effect timing. */
   applies: SettingsApplies
-  /** Schema-declared secret positions; present only under `redactSecrets`. */
+  /** Schema-declared secret positions; present on {@link SettingsProvider.describeForWire} results. */
   secrets?: RedactedSecret[]
 }
 ```
@@ -138,18 +146,6 @@ interface SettingsDescriptor {
 type SettingsPathOp =
   | { op: 'set'; path: readonly string[]; value: unknown }
   | { op: 'unset'; path: readonly string[] }
-```
-
-```ts type-equiv
-/** Options for {@link SettingsProvider.describe}. */
-interface SettingsDescribeOptions {
-  /**
-   * Strip `role('secret')` fields from `value`/`base`/`user` and enumerate
-   * them in each descriptor's `secrets`. Every wire surface MUST pass this;
-   * the verbatim default exists for same-process configuration UIs only.
-   */
-  redactSecrets?: boolean
-}
 ```
 
 ## 变更提交
@@ -186,9 +182,10 @@ prepareDocument(): Promise<string | undefined>
 
 /**
  * Register a namespace schema and receive its owner scope. The registration
- * is an effect on the calling plugin's fiber: disposing that fiber removes
- * the namespace and its observers. An invalid stored section fails the
- * registration itself — the earliest point where the schema can judge it.
+ * is an effect on the calling plugin's fiber: disposing that fiber
+ * deactivates its observers, waits for started callbacks, then removes the
+ * namespace. An invalid stored section fails the registration itself — the
+ * earliest point where the schema can judge it.
  * @param ns - unique namespace; duplicate registration fails loud.
  * @param schema - schemastery schema resolving this namespace's value.
  * @param options - composition `base` layer and effect timing.
@@ -200,10 +197,25 @@ register<T>(ns: SettingsNamespace, schema: z<T>, options?: SettingsRegisterOptio
  * Describe every registered namespace for configuration surfaces, including
  * the composition `base` and raw user layers so a form can mark which fields
  * the user overrode (presence in `user`) and what a reset returns to.
- * @param options - redaction switch; wire surfaces must redact.
  * @returns one descriptor per registered namespace, in registration order.
  */
-describe(options?: SettingsDescribeOptions): SettingsDescriptor[]
+describe(): SettingsDescriptor[]
+
+/**
+ * Describe every namespace for an untrusted client. This is a separate
+ * method so a wire carrier cannot forget an opt-in flag: values and layers
+ * contain only schema-proven JSON fields, opaque nodes become write-only
+ * slots, and serialized schema literals are scrubbed.
+ * @returns one fail-closed descriptor per registered namespace.
+ */
+describeForWire(): SettingsDescriptor[]
+
+/**
+ * List namespaces whose owners opted into one configuration surface.
+ * @param surface - configuration surface requesting access.
+ * @returns registered namespaces in registration order.
+ */
+namespacesFor(surface: SettingsSurface): SettingsNamespace[]
 
 /**
  * Read one registered namespace's resolved value.
@@ -252,7 +264,7 @@ async replace(ns: SettingsNamespace, section: object, expectedRevision?: number)
 async mutate(ns: SettingsNamespace, ops: readonly SettingsPathOp[], expectedRevision?: number): Promise<void>
 ```
 
-Source: [`packages/settings/settings/src/index.ts:350`](../../packages/settings/settings/src/index.ts)
+Source: [`packages/settings/settings/src/index.ts:367`](../../packages/settings/settings/src/index.ts)
 
 <a id="settings-events"></a>
 

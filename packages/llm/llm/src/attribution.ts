@@ -7,13 +7,11 @@
  * @module @deepseek-ai/dsh-llm/attribution
  */
 
-import { createRequire } from 'node:module'
-
-// The package's own manifest is the single source of the version so the
-// User-Agent cannot drift from what is published (`./package.json` is an
-// export of this package; the relative path resolves from both `src/` and
-// the bundled `lib/`).
-const { version } = createRequire(import.meta.url)('../package.json') as { version: string }
+import {
+  PRODUCT_IDENTITY,
+  productUserAgent,
+  type ProductIdentity,
+} from '@deepseek-ai/dsh-product-identity'
 
 /**
  * Static public application identity sent to LLM providers.
@@ -22,14 +20,7 @@ const { version } = createRequire(import.meta.url)('../package.json') as { versi
  * local paths, session ids, prompt text, or per-user identifiers belong here,
  * and nothing per-request may influence the values.
  */
-export interface AppIdentity {
-  /** `User-Agent` product token (lowercase, hyphenated). */
-  product: string
-  /** Product version; sourced from package metadata, never hand-copied. */
-  version: string
-  /** Repository home URL of the app, used as the `User-Agent` comment. */
-  url: string
-}
+export type AppIdentity = ProductIdentity
 
 /**
  * The harness's own identity: the default every adapter sends. Deployments
@@ -37,11 +28,7 @@ export interface AppIdentity {
  * {@link attributionHeaders} — omission falls back to this default; nothing
  * can suppress attribution entirely.
  */
-export const APP_IDENTITY: AppIdentity = {
-  product: 'deepseek-harness',
-  version,
-  url: 'https://github.com/deepseek-ai/deepseek-harness',
-}
+export const APP_IDENTITY: AppIdentity = PRODUCT_IDENTITY
 
 /**
  * The standard `User-Agent` value: `product/version (+url)`. The
@@ -51,7 +38,7 @@ export const APP_IDENTITY: AppIdentity = {
  * @returns the ready-to-send header value.
  */
 export function userAgent(identity: AppIdentity = APP_IDENTITY): string {
-  return `${identity.product}/${identity.version} (+${identity.url})`
+  return productUserAgent(identity)
 }
 
 /**

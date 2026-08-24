@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ApprovalRequestId } from '../src/index.ts'
 import type {
   ApprovalRequestId as ApprovalRequestIdType, CordisDynamicPluginId,
@@ -316,13 +316,13 @@ describe('dynamic runner dispatch', () => {
     expect(() => runner.getClientCode(AGENT_B, pluginId, started.pluginRunId)).toThrow('no dynamic plugin')
   })
 
-  it('accepts and ignores an answer to a request nobody is waiting for', async () => {
+  it('rejects an answer to a request nobody is waiting for and orders stale Client cleanup', async () => {
     const { runner } = await setup()
 
-    await expect(runner.resolveRequestRun(ApprovalRequestId('approval-404'), {
+    await expect(runner.resolveRequestRun('missing' as never, ApprovalRequestId('approval-404'), {
       ok: true, pluginRunId: 'run-1' as never,
     }))
-      .resolves.toEqual({ accepted: false })
+      .resolves.toEqual({ accepted: false, reason: 'activation-superseded', retract: true })
   })
 
   it('refuses an answer after stop cancels the request and allows a fresh direct run', async () => {
@@ -343,8 +343,8 @@ describe('dynamic runner dispatch', () => {
     // The user stops it while that page is still loading, cancelling the request.
     await runner.stop(AGENT_A, pluginId)
 
-    await expect(runner.resolveRequestRun(requestId, { ok: true, pluginRunId: first.pluginRunId }))
-      .resolves.toEqual({ accepted: false })
+    await expect(runner.resolveRequestRun(pluginId, requestId, { ok: true, pluginRunId: first.pluginRunId }))
+      .resolves.toEqual({ accepted: false, reason: 'activation-superseded', retract: true })
     expect(gateway.events).toContainEqual([
       'cordis/request-run-resolved',
       { requestId, outcome: 'cancelled' },
@@ -368,8 +368,8 @@ describe('dynamic runner dispatch', () => {
     if (!started.ok) throw new Error(started.message)
     await runner.stop(AGENT_A, pluginId)
 
-    await expect(runner.resolveRequestRun(requestId, { ok: true, pluginRunId: started.pluginRunId }))
-      .resolves.toEqual({ accepted: false })
+    await expect(runner.resolveRequestRun(pluginId, requestId, { ok: true, pluginRunId: started.pluginRunId }))
+      .resolves.toEqual({ accepted: false, reason: 'activation-superseded', retract: true })
     controller.abort()
     expect(gateway.events).toContainEqual([
       'cordis/request-run-resolved',
@@ -377,9 +377,9 @@ describe('dynamic runner dispatch', () => {
     ])
   })
 
-  it('keeps a published request answerable after the creating Tool call ends', async () => {
+  it('cancels a published request when the creating Tool call is cancelled', async () => {
     const { runner, gateway } = await setup()
-    // No answer configured: the request stays pending until the signal fires.
+    // No answer configured: the request remains pending only while its caller remains live.
     const { pluginId, packageId } = define(runner, {
       sessionId: AGENT_A.id, name: 'ui', purpose: 'p', client: CLIENT_CODE,
     })
@@ -392,11 +392,38 @@ describe('dynamic runner dispatch', () => {
     expect(pending).toMatchObject({ ok: true, status: 'awaiting-approval' })
     const asked = gateway.events.find(([name]) => name === 'cordis/request-run')?.[1]
     const requestId = (asked as { requestId: ApprovalRequestIdType }).requestId
-    const started = await runner.runHostHalf(AGENT_A, pluginId, packageId, 'run', requestId, false)
-    if (!started.ok) throw new Error(started.message)
-    await expect(runner.resolveRequestRun(requestId, { ok: true, pluginRunId: started.pluginRunId }))
-      .resolves.toEqual({ accepted: true })
-    expect(running(runner, AGENT_A)).toEqual([{ id: pluginId, running: true }])
+    await expect(runner.runHostHalf(AGENT_A, pluginId, packageId, 'run', requestId, false))
+      .resolves.toMatchObject({ ok: false, message: expect.stringContaining('does not authorize') as string })
+    expect(gateway.events).toContainEqual([
+      'cordis/request-run-resolved',
+      { requestId, outcome: 'cancelled' },
+    ])
+    expect(running(runner, AGENT_A)).toEqual([{ id: pluginId, running: false }])
+  })
+
+  it('expires an unanswered browser activation and releases the Plugin for retry', async () => {
+    vi.useFakeTimers()
+    try {
+      const { runner, gateway } = await setup({ requestTimeoutMs: 50 })
+      const { pluginId, packageId } = define(runner, {
+        sessionId: AGENT_A.id, name: 'ui', purpose: 'p', client: CLIENT_CODE,
+      })
+
+      await expect(runner.run(AGENT_A, pluginId, packageId, 'run'))
+        .resolves.toMatchObject({ ok: true, status: 'awaiting-approval' })
+      await vi.advanceTimersByTimeAsync(50)
+
+      const asked = gateway.events.find(([name]) => name === 'cordis/request-run')?.[1]
+      const requestId = (asked as { requestId: ApprovalRequestIdType }).requestId
+      expect(gateway.events).toContainEqual([
+        'cordis/request-run-resolved',
+        { requestId, outcome: 'timed-out' },
+      ])
+      await expect(runner.run(AGENT_A, pluginId, packageId, 'run'))
+        .resolves.toMatchObject({ ok: true, status: 'awaiting-approval' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('reports the sandbox failure and starts nothing when the host half throws', async () => {

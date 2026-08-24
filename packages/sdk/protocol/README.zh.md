@@ -34,6 +34,6 @@ DeepSeek Harness SDK 运行时的共享协议格式（wire format）：一个按
 
 ## 已知限制与暂缓事项
 
-- **无协议版本协商**——握手只携带 `serverInfo.version`（`0.0.1`，客户端不校验）；处于预发布阶段，无兼容承诺。
+- **无协议版本协商**——握手只携带 `serverInfo.version`（共享的 DeepSeek Harness 产品版本，客户端不校验）；处于预发布阶段，无兼容承诺。
 - **无取消与会话关闭方法**——客户端放弃轮次的方式是关闭运行时进程；见 [`dsh-sdk-jsonrpc-server` README](../server/README.md)。
 - **server→client 请求是未使用的功能**——传输层支持，但服务器从不发送；Python SDK 的应答接口为未来审批流程预留。

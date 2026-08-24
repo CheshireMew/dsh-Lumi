@@ -58,11 +58,10 @@ export type { AgentContext, ISessions } from './contract/sessions.ts'
 export type { IWorkspaces } from './contract/workspaces.ts'
 export type {
   SessionBinding, SessionListState, SessionProvideContribution, SessionProvideDescriptor, SessionSummary,
-} from './sessions/service.ts'
-export type { SessionListPhase, SessionSearchResultItem, SubagentCatalogSnapshot } from './sessions/manager.ts'
+  SessionListPhase, SessionSearchResultItem, SubagentCatalogSnapshot,
+} from './contract/session-list.ts'
 export type { SubagentAddress, JobView } from '@deepseek-ai/dsh-client-connection/client'
-export type { WorkspaceListPhase } from './workspaces/manager.ts'
-export type { WorkspaceListState } from './workspaces/service.ts'
+export type { WorkspaceListPhase, WorkspaceListState } from './contract/workspaces.ts'
 export type {
   DirectoryEntry, DirectoryListing, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-connection/client'

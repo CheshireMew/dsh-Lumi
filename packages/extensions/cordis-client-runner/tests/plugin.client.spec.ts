@@ -140,7 +140,7 @@ async function boot(): Promise<Bench> {
       return reportRefused.current ? Promise.reject(new Error('stream gone')) : answered(undefined)
     },
     getClientCode: () => answered(source.current),
-    resolveRequestRun: (requestId: string, resolution: unknown) => {
+    resolveRequestRun: (_pluginId: CordisDynamicPluginId, requestId: string, resolution: unknown) => {
       resolved.push({ requestId, resolution })
       return answered({ accepted: true })
     },

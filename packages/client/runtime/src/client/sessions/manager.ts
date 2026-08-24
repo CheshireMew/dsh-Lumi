@@ -8,36 +8,23 @@ import type {
 } from '@deepseek-ai/dsh-api-remotes/client'
 // Value import from the inline-safe wire layer (not the connection plugin):
 // plugin-to-plugin value imports are a bundle purity error.
-import { transportError } from '@deepseek-ai/dsh-host-apiproxy/api'
+import { transportError } from '@deepseek-ai/dsh-api-protocol/api'
 import { mergeOrderedBaseline } from '../ordered-baseline.ts'
+import type {
+  SessionListPhase, SessionSearchResultItem, SubagentCatalogSnapshot,
+} from '../contract/session-list.ts'
 import type { ConversationRuntime } from './conversation-assembler.ts'
-import type { SessionListEntry, TitledSessionSummary } from './lineage.ts'
-import { flattenLineage } from './lineage.ts'
-import type { PendingInteractionStatus } from './pending.ts'
+import type { SessionListEntry, TitledSessionSummary } from '../contract/lineage.ts'
+import { flattenLineage } from '../contract/lineage.ts'
+import type { PendingInteractionStatus } from '../contract/pending.ts'
 // Type-only merge edge: the title domain's client-namespace outlet declares
 // the 'title' projection key this manager projects into list rows (and any
 // useProjection('title') consumer reads). Zero value imports by construction.
 import type {} from '@deepseek-ai/dsh-session-title/client'
-import { Notifier } from './notifier.ts'
+import { Notifier } from '../contract/notifier.ts'
 import { ProjectionValueStore } from './projection-store.ts'
 import { Session } from './session.ts'
 import type { SessionRemotes } from './remotes.ts'
-
-/**
- * List arrival lifecycle, orthogonal to the pull-activity `state` axis:
- * `pending` (no successful pull yet — an empty items array means "nothing
- * arrived", not "nothing exists") → `ready` (at least one pull landed).
- * Monotone: `ready` never steps back — later pull failures and reconnect
- * re-pulls ride the `state`/`error` axis, which is where failure is modeled
- * (no `error` phase here; that would duplicate `state`).
- */
-export type SessionListPhase = 'pending' | 'ready'
-
-/** Request-local content hit returned to sidebar search consumers. */
-export interface SessionSearchResultItem {
-  sessionId: SessionId
-  snippet: string
-}
 
 /** Immutable session-list snapshot for useSessionList. */
 export interface SessionListSnapshot {
@@ -52,12 +39,6 @@ export interface SessionListSnapshot {
   /** Background jobs per session; an absent key is an empty set. */
   jobsBySession: Readonly<Record<SessionId, readonly JobView[]>>
   currentAddress: SubagentAddress | undefined
-}
-
-/** One parent-addressed durable catalog projected through the sessions snapshot. */
-export interface SubagentCatalogSnapshot extends SubagentCatalog {
-  state: 'loading' | 'ready' | 'error'
-  error: RpcError | null
 }
 
 interface CatalogInflight {
@@ -446,11 +427,37 @@ export class SessionManager {
     this.notifier.markDirty()
     this.listInflight = (async () => {
       try {
-        const { result } = await this.api.sessions.list({})
+        const pulled: SessionSummary[] = []
+        const seenCursors = new Set<string>()
+        let cursor: string | undefined
+        let staleRestarted = false
+        let result: Awaited<ReturnType<typeof this.api.sessions.list>>['result']
+        for (;;) {
+          const response = await this.api.sessions.list(cursor === undefined ? {} : { cursor })
+          result = response.result
+          if (!result.ok) {
+            if (result.error.code === 'session-list-cursor-stale' && cursor !== undefined && !staleRestarted) {
+              pulled.length = 0
+              seenCursors.clear()
+              cursor = undefined
+              staleRestarted = true
+              continue
+            }
+            break
+          }
+          pulled.push(...result.value.items)
+          const nextCursor = result.value.nextCursor
+          if (nextCursor === undefined) break
+          if (seenCursors.has(nextCursor)) {
+            throw new Error('session.list returned a repeated continuation cursor')
+          }
+          seenCursors.add(nextCursor)
+          cursor = nextCursor
+        }
         if (result.ok) {
           const baseline = this.listPhase === 'pending'
-            ? result.value.items
-            : mergeOrderedBaseline(established, result.value.items, summary => summary.sessionId)
+            ? pulled
+            : mergeOrderedBaseline(established, pulled, summary => summary.sessionId)
           // Seed first observations from the pull-time baseline BEFORE replaying
           // in-flight mutations, then reconcile the reminders after EVERY
           // replayed mutation: an edge that happens entirely between mutations
@@ -483,7 +490,7 @@ export class SessionManager {
           // cold cache serves only version-matching keys — so an absent key
           // must not clear; higher-seq-wins still keeps a stale list block
           // from overwriting a newer push frame or tail baseline.
-          for (const s of result.value.items) {
+          for (const s of pulled) {
             const block = s.projections
             if (block === undefined) continue
             const store = this.projectionStore(s.sessionId)
@@ -600,6 +607,39 @@ export class SessionManager {
     } catch (error) {
       return transportError(error)
     }
+  }
+
+  /**
+   * Permanently delete one cold session tree and remove every confirmed row.
+   * @param sessionId - root session to delete.
+   * @param recursive - whether descendant sessions may be deleted with the root.
+   * @returns the wire result and the ids confirmed deleted by the Host.
+   */
+  async delete(
+    sessionId: SessionId,
+    recursive: boolean,
+  ): Promise<RpcResult<{ deletedSessionIds: SessionId[] }>> {
+    try {
+      const { result } = await this.api.sessions.delete({ sessionId, recursive })
+      if (result.ok) {
+        for (const deletedId of result.value.deletedSessionIds) this.removeDeletedSession(deletedId)
+      }
+      return result
+    } catch (error: unknown) {
+      return transportError(error)
+    }
+  }
+
+  /** Apply the authoritative permanent-deletion postcondition locally. */
+  private removeDeletedSession(sessionId: SessionId): void {
+    this.recordMutation({ kind: 'remove', sessionId })
+    this.sessions.get(sessionId)?.handleRemoved()
+    this.pendingBuffers.delete(sessionId)
+    this.pendingInteractions.delete(sessionId)
+    this.jobsBySession.delete(sessionId)
+    this.projectionStores.delete(sessionId)
+    this.catalogs.delete(sessionId)
+    this.addresses.delete(sessionId)
   }
 
   /**
@@ -858,6 +898,10 @@ export class SessionManager {
           if (address.parentSessionId !== frame.sessionId) continue
           this.sessions.get(childId)?.handleSubagentParentAvailable(false)
         }
+        return
+      }
+      case 'host/session-deleted': {
+        this.removeDeletedSession(frame.sessionId)
         return
       }
       case 'host/session-status': {

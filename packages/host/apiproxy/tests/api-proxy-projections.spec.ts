@@ -19,8 +19,8 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
-import type { MuxFrame, RpcRequest } from '@deepseek-ai/dsh-host-apiproxy/api'
-import { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
+import type { MuxFrame, RpcRequest } from '@deepseek-ai/dsh-api-protocol/api'
+import { RpcId } from '@deepseek-ai/dsh-api-protocol/api/rpc'
 import { createApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
@@ -224,6 +224,11 @@ describe('session.list projections column', () => {
     const load = () => { throw new Error('list must not load event logs') }
     ctx.provide('sessionPersistence', {
       list: async () => [{ version: 0, id: coldId, createdAt: 5, cwd: '/tmp' }],
+      listSnapshots: async () => [{
+        header: { version: 0, id: coldId, createdAt: 5, cwd: '/tmp' },
+        lastPromptAt: null,
+        revision: 'projection-test:cached',
+      }],
       locate: () => undefined,
       load,
       inspect: load,
@@ -248,6 +253,11 @@ describe('session.list projections column', () => {
     const coldId = SessionId('session-cold-uncached')
     ctx.provide('sessionPersistence', {
       list: async () => [{ version: 0, id: coldId, createdAt: 5, cwd: '/tmp' }],
+      listSnapshots: async () => [{
+        header: { version: 0, id: coldId, createdAt: 5, cwd: '/tmp' },
+        lastPromptAt: null,
+        revision: 'projection-test:uncached',
+      }],
       locate: () => undefined,
     } as never)
     const response = await api(ctx).sessions.list(request({}))

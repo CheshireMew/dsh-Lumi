@@ -878,6 +878,9 @@ function materializePersistenceSnapshots(
     if (typeof snapshot.revision !== 'string') {
       throw new Error('persistence snapshot revision must be a string')
     }
+    if (snapshot.lastPromptAt !== null && !Number.isSafeInteger(snapshot.lastPromptAt)) {
+      throw new Error('persistence snapshot lastPromptAt must be a safe integer or null')
+    }
     const header = structuredClone(snapshot.header)
     if (result.has(header.id)) {
       throw new Error(`persistence listed duplicate session "${header.id}"`)

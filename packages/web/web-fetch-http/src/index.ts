@@ -9,11 +9,11 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { PRODUCT_USER_AGENT } from '@deepseek-ai/dsh-product-identity'
+import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import type {} from '@deepseek-ai/dsh-web'
 import { HttpFetchProvider } from './provider.ts'
 import type { HttpFetchLimits } from './provider.ts'
-
-const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647
 
 export {
   LOCAL_FETCH_PROVIDER_ID,
@@ -22,7 +22,7 @@ export {
 export type { HttpFetchLimits } from './provider.ts'
 
 /** Default `User-Agent`: an explicit product agent, never a browser disguise. */
-export const DEFAULT_USER_AGENT = 'deepseek-harness/0.0.1 (+https://github.com/deepseek-ai)'
+export const DEFAULT_USER_AGENT = PRODUCT_USER_AGENT
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'web-fetch-http'
@@ -68,8 +68,8 @@ function assertPositiveFinite(name: string, value: number): void {
 /** Node coerces larger timer delays to 1 ms, so reject them at configuration time. */
 function assertTimeoutMs(value: number): void {
   assertPositiveFinite('timeoutMs', value)
-  if (value > MAX_NODE_TIMER_DELAY_MS) {
-    throw new Error(`web-fetch-http: timeoutMs must be no greater than ${MAX_NODE_TIMER_DELAY_MS}`)
+  if (value > MAX_TIMER_DELAY_MS) {
+    throw new Error(`web-fetch-http: timeoutMs must be no greater than ${MAX_TIMER_DELAY_MS}`)
   }
 }
 

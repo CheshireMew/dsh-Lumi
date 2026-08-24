@@ -15,9 +15,9 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import ApprovalService from '@deepseek-ai/dsh-user-approval'
 import type { ApprovalRequestId } from '@deepseek-ai/dsh-user-approval'
-import type { ApiProxy, MuxFrame, RpcRequest } from '@deepseek-ai/dsh-host-apiproxy/api'
-import type { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
-import { RpcId as mintRpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
+import type { ApiProxy, MuxFrame, RpcRequest } from '@deepseek-ai/dsh-api-protocol/api'
+import type { RpcId } from '@deepseek-ai/dsh-api-protocol/api/rpc'
+import { RpcId as mintRpcId } from '@deepseek-ai/dsh-api-protocol/api/rpc'
 import { createApiProxy } from '../src/api-proxy.ts'
 
 async function harness(): Promise<{ ctx: Context; api: ApiProxy }> {

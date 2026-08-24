@@ -36,7 +36,7 @@ import type {
   ModelProviderGroup, ModelSelection, RpcRequest, RpcResponse, RpcResult, ServerRequest, ServerResponse, SessionSummary,
   ToolCallView, ToolEventView, ToolResultView, WorkspaceId, WorkspaceView,
 } from './api.ts'
-import type { RequestPayload, ResponseValue, RpcMethodMap } from '@deepseek-ai/dsh-host-apiproxy/api'
+import type { RequestPayload, ResponseValue, RpcMethodMap } from '@deepseek-ai/dsh-api-protocol/api'
 import { AbstractApiClient, RpcId, SESSION_SEARCH_RESULT_LIMIT } from './api.ts'
 import { randomUuid } from './random-uuid.ts'
 import type { ClientConnectionRpc } from '../rpc.ts'
@@ -2178,7 +2178,80 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
 
   const api: ApiProxy = {
     sessions: {
-      list: request => ok(request, { items: [...sessions].sort((a, b) => b.updatedAt - a.updatedAt) }),
+      list: (request) => {
+        const sorted = [...sessions].sort((a, b) =>
+          b.updatedAt - a.updatedAt || String(a.sessionId).localeCompare(String(b.sessionId)))
+        const start = request.payload.cursor === undefined ? 0 : Number(request.payload.cursor)
+        if (!Number.isSafeInteger(start) || start < 0) {
+          return err(request, {
+            code: 'session-list-cursor-invalid',
+            message: 'invalid fixture session list cursor',
+            details: {},
+          })
+        }
+        const limit = request.payload.limit ?? 50
+        const items = sorted.slice(start, start + limit)
+        const next = start + items.length
+        return ok(request, {
+          items,
+          ...next < sorted.length ? { nextCursor: String(next) } : {},
+        })
+      },
+      delete: (request, signal) => {
+        if (signal.aborted) {
+          return err(request, { code: 'cancelled', message: 'fixture session deletion was aborted', details: {} })
+        }
+        const { sessionId, recursive = false } = request.payload
+        const byParent = new Map<SessionId, SessionId[]>()
+        for (const summary of sessions) {
+          if (summary.parentSessionId === undefined) continue
+          const children = byParent.get(summary.parentSessionId)
+          if (children === undefined) byParent.set(summary.parentSessionId, [summary.sessionId])
+          else children.push(summary.sessionId)
+        }
+        const reachable: SessionId[] = []
+        const seen = new Set<SessionId>()
+        const stack = [sessionId]
+        while (stack.length > 0) {
+          const id = stack.pop() as SessionId
+          if (seen.has(id)) continue
+          seen.add(id)
+          reachable.push(id)
+          stack.push(...(byParent.get(id) ?? []))
+        }
+        const root = summaryOf(sessionId)
+        const descendants = reachable.filter(id => id !== sessionId)
+        if (root === undefined && descendants.length === 0) {
+          return err(request, { code: 'session-not-found', message: `no session ${sessionId}`, details: { sessionId } })
+        }
+        const live = reachable.find(id => summaryOf(id)?.running === true)
+        if (live !== undefined) {
+          return err(request, {
+            code: 'session-delete-live',
+            message: `cannot delete running fixture session ${live}`,
+            details: { sessionId: live },
+          })
+        }
+        if (!recursive && descendants.length > 0) {
+          return err(request, {
+            code: 'session-has-descendants',
+            message: `session ${sessionId} has descendants`,
+            details: { sessionId, descendantCount: descendants.length },
+          })
+        }
+        const deletedSessionIds = [...reachable].reverse().filter(id => summaryOf(id) !== undefined)
+        for (const id of deletedSessionIds) {
+          const index = sessions.findIndex(summary => summary.sessionId === id)
+          if (index !== -1) sessions.splice(index, 1)
+          logs.delete(id)
+          modelSelections.delete(id)
+          for (const workspace of workspaces) workspace.sessionIds = workspace.sessionIds.filter(candidate => candidate !== id)
+          const archivedAt = archivedSessionIds.indexOf(id)
+          if (archivedAt !== -1) archivedSessionIds.splice(archivedAt, 1)
+          emitHost({ type: 'host/session-deleted', sessionId: id })
+        }
+        return ok(request, { deletedSessionIds })
+      },
       search: (request, signal) => {
         if (signal.aborted) {
           return err(request, {
@@ -2694,6 +2767,15 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         }
         return ok(request, { archivedSessionIds: [...archivedSessionIds] })
       },
+      unarchiveSession: (request) => {
+        const { sessionId } = request.payload
+        const index = archivedSessionIds.indexOf(sessionId)
+        if (index !== -1) {
+          archivedSessionIds.splice(index, 1)
+          emitHost({ type: 'host/archived-sessions-changed', archivedSessionIds: [...archivedSessionIds] })
+        }
+        return ok(request, { archivedSessionIds: [...archivedSessionIds] })
+      },
     },
     agentPresets: {
       // Both trusts appear, because a surface must present a locally authored
@@ -3078,6 +3160,7 @@ export class FixtureApiClient extends AbstractApiClient {
   ): Promise<RpcResponse<unknown>> {
     switch (method) {
       case 'session.list': return this.api.sessions.list(request)
+      case 'session.delete': return this.api.sessions.delete(request, signal)
       case 'session.search': return this.api.sessions.search(request, signal)
       case 'session.create': return this.api.sessions.create(request)
       case 'session.history': return this.api.sessions.history(request)
@@ -3105,6 +3188,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'workspace.insertBefore': return this.api.workspace.insertBefore(request)
       case 'workspace.insertSessionBefore': return this.api.workspace.insertSessionBefore(request)
       case 'workspace.archiveSession': return this.api.workspace.archiveSession(request)
+      case 'workspace.unarchiveSession': return this.api.workspace.unarchiveSession(request)
       case 'skill.list': return this.api.skills.list(request)
       case 'agentPreset.list': return this.api.agentPresets.list(request)
       case 'agentPreset.select': return this.api.agentPresets.select(request)

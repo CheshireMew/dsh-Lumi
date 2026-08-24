@@ -1,0 +1,4 @@
+concurrent-exit=1
+message=Harness home "{{home}}" is unavailable: PID {{pid}} is already using it with profile "lease-fixture" since {{startedAt}}. Stop that Host or use its existing UI before starting another profile.
+owner-crash=observed
+replacement=ready

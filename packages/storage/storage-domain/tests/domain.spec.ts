@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
-import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
+import Storage, { StorageError, storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
+import type { KvUnitDescriptor, StorageBackend } from '@deepseek-ai/dsh-storage'
 import { apply, DomainFacility, defineDomain, domainTable } from '../src/index.ts'
 import type { Config } from '../src/index.ts'
 import type { DomainChanged } from '../src/events.ts'
@@ -25,6 +26,26 @@ const bareSpec = defineDomain({
   tables: { rows: domainTable<string, Item>(itemSchema) },
 })
 
+const resetSpec = defineDomain({
+  name: 'derived',
+  version: 1,
+  recovery: 'reset',
+  tables: { items: domainTable<string, Item>(itemSchema) },
+})
+
+/** Backend that injects scripted open failures before delegating to memory. */
+function scriptedOpenBackend(...failures: Error[]) {
+  const inner = new MemoryStorageBackend()
+  const open = vi.fn(async (descriptor: KvUnitDescriptor) => {
+    const failure = failures.shift()
+    if (failure !== undefined) throw failure
+    return inner.kv.open(descriptor)
+  })
+  const destroy = vi.fn((descriptor: KvUnitDescriptor) => inner.kv.destroy(descriptor))
+  const backend: StorageBackend = { kv: { open, destroy }, close: () => inner.close() }
+  return { backend, open, destroy }
+}
+
 /** Boot a context with the storage hub, one memory backend, and a facility over it. */
 async function harness(options?: { pool?: MemoryMediaPool; config?: Partial<Config> }) {
   const ctx = new Context()
@@ -47,6 +68,9 @@ describe('defineDomain', () => {
     expect(() => defineDomain({
       name: 'ok', version: 1, tables: { 'Bad Table': domainTable<string, Item>(itemSchema) },
     })).toThrow(/table name/)
+    expect(() => defineDomain({
+      name: 'ok', version: 1, recovery: 'retry' as never, tables: {},
+    })).toThrow(/recovery/)
   })
 
   it('rejects a global schema that accepts null (the never-written sentinel)', () => {
@@ -107,6 +131,7 @@ describe('DomainFacility.open', () => {
           setGlobal: async () => {},
           close: async () => {},
         }),
+        destroy: async () => {},
       },
       close: async () => {},
     })
@@ -147,6 +172,63 @@ describe('DomainFacility.open', () => {
       name: 'StorageError',
       code: 'version-mismatch',
     })
+    expect(pool.destroyed).toEqual([])
+  })
+
+  it('resets a declared derived domain once after a version mismatch', async () => {
+    const pool = new MemoryMediaPool()
+    pool.versions.set('derived', 7)
+    pool.media.set('derived', { tables: new Map([['items', new Map([['old', { label: 'old', count: 1 }]])]]), global: null })
+    const { ctx, facility } = await harness({ pool })
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    const domain = await facility.open(resetSpec)
+    expect(domain.table('items').size).toBe(0)
+    expect(pool.destroyed).toEqual(['derived'])
+    expect(warn).toHaveBeenCalledOnce()
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/derived.*memory.*version-mismatch/))
+  })
+
+  it('resets a declared derived domain once after stored record validation fails', async () => {
+    const pool = new MemoryMediaPool()
+    pool.versions.set('derived', 1)
+    pool.media.set('derived', {
+      tables: new Map([['items', new Map([['bad', { label: 'bad', count: 'NaN' }]])]]),
+      global: null,
+    })
+    const { facility } = await harness({ pool })
+    const domain = await facility.open(resetSpec)
+    expect(domain.table('items').size).toBe(0)
+    expect(pool.destroyed).toEqual(['derived'])
+  })
+
+  it('resets a declared derived domain once after a malformed medium', async () => {
+    const scripted = scriptedOpenBackend(new StorageError('malformed-medium', 'damaged fixture'))
+    const { ctx, facility } = await harness({ config: { backend: 'scripted' } })
+    ctx.storage.backend.register('scripted', scripted.backend)
+    await expect(facility.open(resetSpec)).resolves.toBeDefined()
+    expect(scripted.open).toHaveBeenCalledTimes(2)
+    expect(scripted.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('does not reset a derived domain for ordinary failures', async () => {
+    const scripted = scriptedOpenBackend(Object.assign(new Error('disk unavailable'), { code: 'EIO' }))
+    const { ctx, facility } = await harness({ config: { backend: 'scripted' } })
+    ctx.storage.backend.register('scripted', scripted.backend)
+    await expect(facility.open(resetSpec)).rejects.toThrow('disk unavailable')
+    expect(scripted.open).toHaveBeenCalledOnce()
+    expect(scripted.destroy).not.toHaveBeenCalled()
+  })
+
+  it('attempts reset only once when the replacement open also fails', async () => {
+    const scripted = scriptedOpenBackend(
+      new StorageError('malformed-medium', 'first damage'),
+      new StorageError('malformed-medium', 'persistent damage'),
+    )
+    const { ctx, facility } = await harness({ config: { backend: 'scripted' } })
+    ctx.storage.backend.register('scripted', scripted.backend)
+    await expect(facility.open(resetSpec)).rejects.toThrow('persistent damage')
+    expect(scripted.open).toHaveBeenCalledTimes(2)
+    expect(scripted.destroy).toHaveBeenCalledOnce()
   })
 })
 

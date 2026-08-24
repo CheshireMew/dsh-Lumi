@@ -34,8 +34,8 @@ Status: implemented
 - **在 `settings.register()` 处 opt-in metadata**——语义最正（由 namespace 的属主自行声明其暴露与否），改动也最大：seam 的公共接口、两个 LLM（大语言模型）插件，以及它们的文档。记录为：一旦某个非 LLM 的 namespace 确实需要这个面，就采用这个形状。
 - **区分「未注册」与「已注册但未暴露」**——诊断更好，同时也是一台 namespace 枚举预言机。统一答复是刻意为之。
 - **用 diff 而非 revision 来检测冲突**——对整分节写入而言，拿提交时的基线与存储比对是可行的，但编辑器持有的是**脱敏后**的分节：它给不出可比对的基线，这与它不能安全地 `replace` 是同一个原因。计数器两者都不需要。
-- **在这里就修掉脱敏的缺口**——`redactSecrets` 只遍历 `object`/`dict`/`array`，因此藏在 union、intersection 或 transform 之后的机密会被原样返回，且 `secrets` 列表为空；`schema.toJSON()` 会带上 secret 字段的 `.default(...)`；写入拒绝的消息返回的是可能引用了输入的 schema 文本；客户端通过 schemastery 的 `new Function` 重建信封；而 pi-ai 那个纯字符串的 `headers` 字典完全可以合法地放下 `Authorization`。全部真实存在，也全部刻意留给一个 fail-closed 的 `describeForWire()`——它会拒绝自己无法证明安全的 schema。它们被记录为 `TODO(settings-wire-redaction)` 以及各属主 README 的 Known Limitations，而不是在这里做一半。
+- **继续把协议脱敏放在 `describe()` 的可选开关后面**——已经由完成的后续工作否决。settings seam 现在公开独立的 fail-closed `describeForWire()`：它处理 union 与 intersection，把 transform 和未知 schema 节点整体视为不透明内容，清理序列化默认值，而且绝不返回 schema／provider 的拒绝文本。pi-ai profile schema 也把任意 `headers` 映射标为只写，因为 `Authorization` 等名称即使元素 schema 只是普通字符串，也会承载凭据。`describe()` 继续原样返回数据，仅限同进程使用。
 
 ## 影响
 
-`trustedHosts` 部署下的 LAN 客户端已经完全无法渲染设置页；配置表层就是回环。注册了 settings namespace 的插件，在它同时注册可配置提供方之前不会变得可在 Web 上配置——这是刻意的，也正是 `settings-not-exposed` 要在消息里点明这条边界的原因。`SettingsDescriptor` 新增了必填的 `revision`，因此以编程方式构造 descriptor 形状值的地方都必须提供它；`settings/document-updated` 是一个新事件，提供方侧的任何 listener 现在都可以观察它。忽略 `expectedRevision` 的客户端，其后写胜出的语义完全不变。延后事项：fail-closed 的协议 describe（连同它所承载的 `headers` 与信封净化工作），以及一套不含可执行代码的浏览器 schema 协议。
+`trustedHosts` 部署下的 LAN 客户端已经完全无法渲染设置页；配置表层就是回环。注册了 settings namespace 的插件，在它同时注册可配置提供方之前不会变得可在 Web 上配置——这是刻意的，也正是 `settings-not-exposed` 要在消息里点明这条边界的原因。`SettingsDescriptor` 新增了必填的 `revision`，因此以编程方式构造 descriptor 形状值的地方都必须提供它；`settings/document-updated` 是一个新事件，提供方侧的任何 listener 现在都可以观察它。忽略 `expectedRevision` 的客户端，其后写胜出的语义完全不变。协议现在拥有默认拒绝不确定内容的 descriptor 路径；与 schema 实现无关的浏览器表单协议仍属于独立的后续工作。

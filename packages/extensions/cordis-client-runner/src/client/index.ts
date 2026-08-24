@@ -261,8 +261,8 @@ export function apply(ctx: Context): void {
         if (!answered.ok) throw new Error(`${answered.error.code}: ${answered.error.message}`)
         return answered.value
       },
-      resolveRequestRun: async (requestId, resolution) => {
-        const answered = await ctx.remote.dynamicCordisRunner.resolveRequestRun(requestId, resolution)
+      resolveRequestRun: async (pluginId, requestId, resolution) => {
+        const answered = await ctx.remote.dynamicCordisRunner.resolveRequestRun(pluginId, requestId, resolution)
         // Thrown rather than returned: `answer` logs and drops a failed answer,
         // and the host settles the request on its own either way.
         if (!answered.ok) throw new Error(`${answered.error.code}: ${answered.error.message}`)
@@ -297,7 +297,7 @@ export function apply(ctx: Context): void {
   })
   ctx.remote.$on('cordis/request-run-resolved', (resolved) => { orchestrator.close(resolved.requestId) })
   ctx.remote.$on('cordis/dynamic-retract', (retracted) => {
-    runner.retract(retracted.pluginId, retracted.pluginRunId)
+    void runner.retract(retracted.pluginId, retracted.pluginRunId)
   })
   ctx.remote.$on('cordis/inspect-query', (request) => {
     void inspect.query(request).catch((error: unknown) => {

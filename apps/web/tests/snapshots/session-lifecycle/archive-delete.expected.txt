@@ -1,0 +1,10 @@
+group=Archived
+session=Fixture 历史会话
+menu=Restore session
+menu=Delete session permanently
+dialog=Delete session permanently
+description=This permanently deletes “Fixture 历史会话” and every descendant session log. This cannot be undone.
+button=Cancel
+button=Delete session permanently
+error=session deletion failed: session-delete-live: cannot delete running fixture session fx-alpha
+dialog-preserved=true

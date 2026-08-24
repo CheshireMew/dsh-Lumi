@@ -98,5 +98,19 @@ export function runKvBackendContract(label: string, create: () => Promise<KvBack
       await backend.close()
       await backend.close()
     })
+
+    it('destroys only a closed unit, is idempotent when absent, and reopens empty', async () => {
+      const { backend } = await create()
+      const unit = await backend.kv!.open(DESCRIPTOR)
+      await unit.putRecord('alpha', 'k', { v: 1 })
+      await unit.setGlobal({ counter: 1 })
+      await expect(backend.kv!.destroy(DESCRIPTOR)).rejects.toThrow(/open/)
+      await unit.close()
+      await backend.kv!.destroy(DESCRIPTOR)
+      await backend.kv!.destroy(DESCRIPTOR)
+      const empty = await backend.kv!.open(DESCRIPTOR)
+      await expect(empty.loadAll()).resolves.toEqual({ tables: { alpha: {}, beta: {} }, global: null })
+      await backend.close()
+    })
   })
 }

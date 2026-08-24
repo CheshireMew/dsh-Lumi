@@ -17,7 +17,12 @@ type SettingsNamespace = Branded<'SettingsNamespace'>
 
 ## Registration
 
-Registration binds a schemastery schema to a namespace on the calling plugin's fiber — disposing that fiber removes the namespace and its observers. The options carry the composition layer, the owner's effect timing, and an optional check for what the schema cannot express.
+Registration binds a schemastery schema to a namespace on the calling plugin's fiber. Disposing that fiber deactivates its observers, waits for callbacks that already started, and removes the namespace. A write that had already entered provider persistence still finishes; if a replacement registration now owns the namespace, it re-resolves from the committed section. The options carry the composition layer, the owner's effect timing, and an optional check for what the schema cannot express.
+
+```ts type-equiv
+/** Configuration surfaces a namespace owner may explicitly opt into. */
+type SettingsSurface = 'configuration-client'
+```
 
 ```ts type-equiv
 /** Registration options beyond the namespace schema. */
@@ -26,6 +31,8 @@ interface SettingsRegisterOptions<T> {
   base?: Partial<T>
   /** Owner's effect timing, surfaced to configuration UIs; defaults to `live`. */
   applies?: SettingsApplies
+  /** Configuration surfaces allowed to read and write this namespace. */
+  surfaces?: readonly SettingsSurface[]
   /**
    * Reject a resolved section the owner could not act on, for constraints its
    * schema cannot express — a cross-field requirement, or one field's validity
@@ -49,7 +56,7 @@ interface SettingsRegisterOptions<T> {
 }
 ```
 
-`validate` runs after the schema admits a value, so it sees defaults and the composition base exactly as the owner will. `dsh-llm-pi-ai` uses it to refuse a provider profile it could not serve at the write that produced it, rather than storing one that would disable every route in its namespace.
+`surfaces` makes client exposure an owner decision. The host asks `namespacesFor('configuration-client')` and exposes only those registrations, so adding or removing a configurable plugin cannot leave a second host-side allowlist stale. `validate` runs after the schema admits a value, so it sees defaults and the composition base exactly as the owner will. `dsh-llm-pi-ai` uses it to refuse a provider profile it could not serve at the write that produced it, rather than storing one that would disable every route in its namespace.
 
 `applies` is a UI hint, not a mechanism: a `restart` owner simply never watches, so its value is read once at construction and configuration surfaces can badge the pending change.
 
@@ -72,7 +79,8 @@ interface SettingsScope<T> {
    * of one callback run asynchronously, one at a time, in commit order; a
    * rejection is contained and logged like a sync throw. After the disposer
    * returns, no further invocation starts — one already queued is skipped;
-   * one already started still settles, and service disposal waits for it.
+   * one already started still settles. Registrant and service disposal both
+   * wait for started invocations they own.
    * @param callback - invoked after each commit with the next and previous values.
    * @returns the disposer removing this observer.
    */
@@ -95,7 +103,7 @@ interface SettingsScope<T> {
 
 ## Descriptors
 
-`describe()` serializes every registered namespace for configuration surfaces: the schemastery `toJSON()` envelope drives schema-rendered forms, the resolved value fills them, and the detached `base`/`user` layers let a form mark user-overridden fields by presence. `describe({ redactSecrets: true })` — mandatory on every wire surface — strips `role('secret')` fields from all three layers and enumerates their `{path, set}` slots so a page can render write-only inputs without ever receiving a secret.
+`describe()` returns verbatim same-process descriptors: the Schemastery `toJSON()` envelope, resolved value, and detached `base`/`user` layers. `describeForWire()` is the separate fail-closed client surface. It keeps schema-proven JSON fields, makes transforms and unknown schema nodes opaque, strips `role('secret')` fields from all three value layers, removes secret literals from the serialized schema, and enumerates `{path, set}` slots so a page can render write-only inputs without receiving a secret. ApiProxy uses only this method and returns value-free text for schema or provider write failures.
 
 ```ts type-equiv
 /** One registered namespace as surfaced to configuration UIs. */
@@ -120,7 +128,7 @@ interface SettingsDescriptor {
   user?: unknown
   /** Owner's declared effect timing. */
   applies: SettingsApplies
-  /** Schema-declared secret positions; present only under `redactSecrets`. */
+  /** Schema-declared secret positions; present on {@link SettingsProvider.describeForWire} results. */
   secrets?: RedactedSecret[]
 }
 ```
@@ -138,18 +146,6 @@ A caller that holds only the redacted descriptor cannot safely rebuild a section
 type SettingsPathOp =
   | { op: 'set'; path: readonly string[]; value: unknown }
   | { op: 'unset'; path: readonly string[] }
-```
-
-```ts type-equiv
-/** Options for {@link SettingsProvider.describe}. */
-interface SettingsDescribeOptions {
-  /**
-   * Strip `role('secret')` fields from `value`/`base`/`user` and enumerate
-   * them in each descriptor's `secrets`. Every wire surface MUST pass this;
-   * the verbatim default exists for same-process configuration UIs only.
-   */
-  redactSecrets?: boolean
-}
 ```
 
 ## Change commits
@@ -186,9 +182,10 @@ prepareDocument(): Promise<string | undefined>
 
 /**
  * Register a namespace schema and receive its owner scope. The registration
- * is an effect on the calling plugin's fiber: disposing that fiber removes
- * the namespace and its observers. An invalid stored section fails the
- * registration itself — the earliest point where the schema can judge it.
+ * is an effect on the calling plugin's fiber: disposing that fiber
+ * deactivates its observers, waits for started callbacks, then removes the
+ * namespace. An invalid stored section fails the registration itself — the
+ * earliest point where the schema can judge it.
  * @param ns - unique namespace; duplicate registration fails loud.
  * @param schema - schemastery schema resolving this namespace's value.
  * @param options - composition `base` layer and effect timing.
@@ -200,10 +197,25 @@ register<T>(ns: SettingsNamespace, schema: z<T>, options?: SettingsRegisterOptio
  * Describe every registered namespace for configuration surfaces, including
  * the composition `base` and raw user layers so a form can mark which fields
  * the user overrode (presence in `user`) and what a reset returns to.
- * @param options - redaction switch; wire surfaces must redact.
  * @returns one descriptor per registered namespace, in registration order.
  */
-describe(options?: SettingsDescribeOptions): SettingsDescriptor[]
+describe(): SettingsDescriptor[]
+
+/**
+ * Describe every namespace for an untrusted client. This is a separate
+ * method so a wire carrier cannot forget an opt-in flag: values and layers
+ * contain only schema-proven JSON fields, opaque nodes become write-only
+ * slots, and serialized schema literals are scrubbed.
+ * @returns one fail-closed descriptor per registered namespace.
+ */
+describeForWire(): SettingsDescriptor[]
+
+/**
+ * List namespaces whose owners opted into one configuration surface.
+ * @param surface - configuration surface requesting access.
+ * @returns registered namespaces in registration order.
+ */
+namespacesFor(surface: SettingsSurface): SettingsNamespace[]
 
 /**
  * Read one registered namespace's resolved value.
@@ -252,7 +264,7 @@ async replace(ns: SettingsNamespace, section: object, expectedRevision?: number)
 async mutate(ns: SettingsNamespace, ops: readonly SettingsPathOp[], expectedRevision?: number): Promise<void>
 ```
 
-Source: [`packages/settings/settings/src/index.ts:350`](../../packages/settings/settings/src/index.ts)
+Source: [`packages/settings/settings/src/index.ts:367`](../../packages/settings/settings/src/index.ts)
 
 <a id="settings-events"></a>
 

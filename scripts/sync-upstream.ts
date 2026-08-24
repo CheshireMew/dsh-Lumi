@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { readUpstreamPatchManifest, touchedUpstreamPatchIds } from './verify-upstream-patches.ts'
 
 interface UpstreamConfig {
   repository: string
@@ -58,11 +59,22 @@ function printStatus(): void {
   git(['cat-file', '-e', `${config.validatedCommit}^{commit}`])
   const [ahead = '0', behind = '0'] = git(['rev-list', '--left-right', '--count', `HEAD...${target}`]).split(/\s+/u)
   const unvalidated = git(['rev-list', '--count', `${config.validatedCommit}..${target}`])
+  const patchManifest = readUpstreamPatchManifest()
+  const pendingOfficialPaths = unvalidated === '0'
+    ? []
+    : git(['diff', '--name-only', `${config.validatedCommit}..${target}`]).split('\n').filter(Boolean)
+  const touchedPatches = touchedUpstreamPatchIds(patchManifest.patches, pendingOfficialPaths)
   console.log(`official target: ${target}`)
   console.log(`validated base: ${config.validatedCommit}`)
   console.log(`current branch: ${git(['branch', '--show-current']) || '(detached)'}`)
   console.log(`relative to ${target}: ${ahead} ahead, ${behind} behind`)
   console.log(`official commits since validated base: ${unvalidated}`)
+  console.log(`maintained downstream patches: ${patchManifest.patches.length}`)
+  console.log(`frozen legacy paths: ${patchManifest.legacyBaseline.length}`)
+  if (touchedPatches.length > 0) {
+    console.log('official changes touch these maintained patches:')
+    for (const id of touchedPatches) console.log(`  ${id}`)
+  }
   if (unvalidated !== '0') {
     console.log('review these high-conflict files after synchronizing:')
     for (const path of config.highConflictFiles) console.log(`  ${path}`)
@@ -113,6 +125,7 @@ export function renderSyncReport(
   nextBase: string,
   changes: string[],
   touchedSeams: string[],
+  touchedPatches: string[],
   checks: readonly CheckResult[],
 ): string {
   const lines = [
@@ -129,6 +142,12 @@ export function renderSyncReport(
     '## Extension seams touched upstream',
     '',
     ...(touchedSeams.length === 0 ? ['- None of the monitored files changed upstream.'] : touchedSeams.map(pathname => `- \`${pathname}\``)),
+    '',
+    '## Maintained downstream patches touched upstream',
+    '',
+    ...(touchedPatches.length === 0
+      ? ['- None of the registered downstream patches were touched upstream.']
+      : touchedPatches.map(id => `- \`${id}\` — review and record retain, reapply, refactor, or retire before validation can pass.`)),
     '',
     '## Automated verification',
     '',
@@ -150,12 +169,13 @@ function writeSyncReport(
   nextBase: string,
   changes: string[],
   touchedSeams: string[],
+  touchedPatches: string[],
   checks: readonly CheckResult[],
 ): string {
   const reports = resolve(root, 'docs', 'upstream-sync')
   mkdirSync(reports, { recursive: true })
   const path = resolve(reports, `${date}.md`)
-  writeFileSync(path, renderSyncReport(date, branch, previousBase, nextBase, changes, touchedSeams, checks), 'utf8')
+  writeFileSync(path, renderSyncReport(date, branch, previousBase, nextBase, changes, touchedSeams, touchedPatches, checks), 'utf8')
   return path
 }
 
@@ -208,15 +228,17 @@ function synchronize(): void {
   const changes = previousBase === nextBase ? [] : git(['log', '--format=%h %s', `${previousBase}..${nextBase}`]).split('\n').filter(Boolean)
   const upstreamFiles = previousBase === nextBase ? [] : git(['diff', '--name-only', `${previousBase}..${nextBase}`]).split('\n').filter(Boolean)
   const touchedSeams = config.highConflictFiles.filter(path => upstreamFiles.includes(path))
+  const touchedPatches = touchedUpstreamPatchIds(readUpstreamPatchManifest().patches, upstreamFiles)
   const checks = [
     runCheck('Lumi extension contracts', ['run', 'compat:lumi']),
     runCheck('Lumi source build', ['run', 'build:lumi']),
     runCheck('Official GUI suite', ['run', 'test:gui']),
     runCheck('Official Web replay', ['run', 'test:web'], { DSH_SNAPSHOT: 'replay' }),
     runCheck('Official repository checks', ['run', 'check:all']),
+    runCheck('Downstream patch inventory', ['run', 'verify-upstream-patches']),
     runCheck('Electron smoke', ['--filter', '@dsh-lumi/desktop', 'run', 'test:e2e:built']),
   ]
-  const report = writeSyncReport(date, branch, previousBase, nextBase, changes, touchedSeams, checks)
+  const report = writeSyncReport(date, branch, previousBase, nextBase, changes, touchedSeams, touchedPatches, checks)
   writeBaseRecord(nextBase, checks)
   if (checks.every(check => check.passed)) {
     writeFileSync(configPath, `${JSON.stringify({ ...config, validatedCommit: nextBase }, undefined, 2)}\n`, 'utf8')

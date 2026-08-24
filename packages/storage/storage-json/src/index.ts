@@ -5,8 +5,8 @@
  * @module @deepseek-ai/dsh-storage-json
  */
 
-import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, unlink } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { StorageError, UNIT_NAME_RE, storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
@@ -25,7 +25,7 @@ export const inject = ['storage']
  * location explicitly.
  */
 export interface Config {
-  /** Directory holding one `<unit>.json` file per unit. */
+  /** Directory holding one `<unit>.json` file per unit; resolved once at backend construction. */
   root: string
 }
 
@@ -40,9 +40,15 @@ export class JsonStorageBackend implements StorageBackend {
   // Reserved synchronously at open() entry so a concurrent open of the same
   // unit fails, and close() can await opens still in flight.
   private readonly opening = new Map<string, Promise<KvUnit>>()
+  /** Destructive operations by unit name; close drains them before returning. */
+  private readonly destroying = new Map<string, Promise<void>>()
   private closed = false
 
-  constructor(private readonly root: string) {}
+  private readonly root: string
+
+  constructor(root: string) {
+    this.root = resolve(root)
+  }
 
   readonly kv: KvFacet = {
     // The body up to the first await runs synchronously, so the opening-slot
@@ -50,7 +56,7 @@ export class JsonStorageBackend implements StorageBackend {
     open: async (descriptor: KvUnitDescriptor): Promise<KvUnit> => {
       if (this.closed) throw new StorageError('closed', 'json backend is closed')
       validateDescriptor(descriptor)
-      if (this.open.has(descriptor.name) || this.opening.has(descriptor.name)) {
+      if (this.open.has(descriptor.name) || this.opening.has(descriptor.name) || this.destroying.has(descriptor.name)) {
         // Double-open is a caller bug, not a medium condition.
         throw new Error(`unit '${descriptor.name}' is already open; a unit has exactly one live handle`)
       }
@@ -58,6 +64,30 @@ export class JsonStorageBackend implements StorageBackend {
       this.opening.set(descriptor.name, opening)
       return opening.finally(() => this.opening.delete(descriptor.name))
     },
+    destroy: descriptor => this.destroyUnit(descriptor),
+  }
+
+  private destroyUnit(descriptor: KvUnitDescriptor): Promise<void> {
+    if (this.closed) return Promise.reject(new StorageError('closed', 'json backend is closed'))
+    try {
+      validateDescriptor(descriptor)
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)))
+    }
+    if (this.open.has(descriptor.name) || this.opening.has(descriptor.name) || this.destroying.has(descriptor.name)) {
+      return Promise.reject(new Error(`unit '${descriptor.name}' is already open; destroy requires a closed unit`))
+    }
+    const pending = this.removeUnitFile(descriptor)
+    this.destroying.set(descriptor.name, pending)
+    return pending.finally(() => this.destroying.delete(descriptor.name))
+  }
+
+  private async removeUnitFile(descriptor: KvUnitDescriptor): Promise<void> {
+    try {
+      await unlink(join(this.root, `${descriptor.name}.json`))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
   }
 
   private async openUnit(descriptor: KvUnitDescriptor): Promise<KvUnit> {
@@ -78,7 +108,7 @@ export class JsonStorageBackend implements StorageBackend {
     if (!this.closed) {
       this.closed = true
     }
-    await Promise.allSettled([...this.opening.values()])
+    await Promise.allSettled([...this.opening.values(), ...this.destroying.values()])
     for (const unit of [...this.open.values()]) {
       await unit.close()
     }

@@ -15,6 +15,8 @@ The `dsh` command is the product launcher for profiles: ordered stacks of plugin
 
 The invoking directory is the default workspace root. The `web` and `headless` profiles auto-initialize on first use from shipped templates; any other profile must be created through `dsh plugin`.
 
+Every profile boot acquires exclusive Host ownership of the canonical `$DSH_HOME` before it initializes or reads profile files. A second Host using the same home exits with the current owner's PID, profile, and start time; use the existing UI or choose another home. Ownership is released after normal teardown and automatically when the process crashes. Config dumps and plugin management do not boot a Host and therefore do not acquire it.
+
 ## App arguments
 
 The launcher parses only its own flags and hands everything after them to the booted profile, where any injected app plugin may parse the shared immutable snapshot ([`dsh-cmdline`](../../packages/boot/cmdline/README.md)). Launcher flags therefore come first, and the first token the launcher does not recognize starts the app's arguments:

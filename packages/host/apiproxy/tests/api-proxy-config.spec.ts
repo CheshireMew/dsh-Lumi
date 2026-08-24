@@ -156,6 +156,7 @@ class BrokenCatalogAdapter extends CatalogAdapter {
 }
 
 const NS = settingsNamespace('llm-deepseek')
+const CONFIGURATION_CLIENT = { surfaces: ['configuration-client'] as const }
 
 const AdapterConfig = z.object({
   apiKey: z.string().role('secret'),
@@ -266,6 +267,19 @@ describe('settings domain', () => {
     expect(JSON.stringify(value)).not.toContain('user-secret')
   })
 
+  it('does not carry secret schema defaults or opaque transform output', async () => {
+    const ctx = await harness()
+    ctx.settings.register(NS, z.object({
+      apiKey: z.string().role('secret').default('schema-secret'),
+      opaque: z.transform(z.object({ token: z.string().role('secret') }), value => value)
+        .default({ token: 'transform-secret' }),
+    }))
+    const api = createApiProxy(ctx, DEFAULTS)
+    const text = JSON.stringify(expectOk(await api.settings.describe(request({}))))
+    expect(text).not.toContain('schema-secret')
+    expect(text).not.toContain('transform-secret')
+  })
+
   it('opens the provider-resolved document without accepting a browser path', async () => {
     const ctx = await harness({ settings: {
       documentPath: '/tmp/described-settings.yaml',
@@ -322,7 +336,7 @@ describe('settings domain', () => {
     expect(opened).toEqual([])
   })
 
-  it('serves model-provider and explicitly allowlisted Web namespaces only', async () => {
+  it('serves model-provider and owner-exposed configuration namespaces only', async () => {
     // The settings seam is general: any plugin may register a namespace for
     // its own configuration. The Web configuration plane remains opt-in, so a
     // future internal plugin cannot become remotely configurable just by
@@ -335,28 +349,29 @@ describe('settings domain', () => {
       defaultPreset: z.union(['read-only', 'workspace-write']).required(),
     }), {
       base: { defaultPreset: 'read-only' },
+      ...CONFIGURATION_CLIENT,
     })
     ctx.settings.register(settingsNamespace('ui-theme'), z.object({
       preference: z.union(['light', 'dark', 'system']).default('system'),
-    }))
+    }), CONFIGURATION_CLIENT)
     ctx.settings.register(settingsNamespace('locale'), z.object({
       preference: z.union(['zh', 'en']).required(false),
-    }))
+    }), CONFIGURATION_CLIENT)
     ctx.settings.register(settingsNamespace('ui-conversation'), z.object({
       busyEnter: z.union(['queue', 'steer']).default('queue'),
-    }))
+    }), CONFIGURATION_CLIENT)
     ctx.settings.register(settingsNamespace('ui-lumi'), z.object({
       layoutMode: z.union(['scene', 'work']).default('scene'),
-    }))
+    }), CONFIGURATION_CLIENT)
     ctx.settings.register(settingsNamespace('shell'), z.object({
       timeoutMs: z.number().default(120_000),
-    }))
+    }), CONFIGURATION_CLIENT)
     ctx.settings.register(settingsNamespace('agent-loop'), z.object({
       maxParallelToolCalls: z.number().default(10),
-    }))
+    }), CONFIGURATION_CLIENT)
     ctx.settings.register(settingsNamespace('web-search-deepseek'), z.object({
       baseURL: z.string(),
-    }))
+    }), CONFIGURATION_CLIENT)
     const api = createApiProxy(ctx, DEFAULTS)
 
     const value = expectOk(await api.settings.describe(request({})))
@@ -419,10 +434,14 @@ describe('settings domain', () => {
 
   it('serves product preference namespaces without invalidating the model catalog', async () => {
     const ctx = await harness()
-    ctx.settings.register(settingsNamespace('ui-onboarding'), z.object({ welcomeNoticeVersion: z.string() }))
+    ctx.settings.register(
+      settingsNamespace('ui-onboarding'),
+      z.object({ welcomeNoticeVersion: z.string() }),
+      CONFIGURATION_CLIENT,
+    )
     ctx.settings.register(settingsNamespace('ui-theme'), z.object({
       preference: z.union(['light', 'dark', 'system']).default('system'),
-    }))
+    }), CONFIGURATION_CLIENT)
     const api = createApiProxy(ctx, DEFAULTS)
     expect(expectOk(await api.settings.describe(request({}))).namespaces.map(view => view.ns))
       .toEqual(['ui-onboarding', 'ui-theme'])
@@ -441,7 +460,11 @@ describe('settings domain', () => {
 
   it('serves the agent-preset namespace, so a browser preset picker can persist its choice', async () => {
     const ctx = await harness()
-    ctx.settings.register(settingsNamespace('agent-presets'), z.object({ default: z.string() }))
+    ctx.settings.register(
+      settingsNamespace('agent-presets'),
+      z.object({ default: z.string() }),
+      CONFIGURATION_CLIENT,
+    )
     const api = createApiProxy(ctx, DEFAULTS)
 
     expectOk(await api.settings.update(request({ ns: 'agent-presets', patch: { default: 'minimal' } })))
@@ -560,6 +583,18 @@ describe('settings domain', () => {
     expect(error.details).toEqual({ ns })
   })
 
+  it('does not echo a rejected secret value through the wire error', async () => {
+    const ctx = await harness()
+    ctx.settings.register(NS, AdapterConfig)
+    const api = createApiProxy(ctx, DEFAULTS)
+    const error = expectErr(await api.settings.update(request({
+      ns: 'llm-deepseek',
+      patch: { apiKey: ['wire-secret-must-not-return'] },
+    })))
+    expect(error.code).toBe('settings-rejected')
+    expect(JSON.stringify(error)).not.toContain('wire-secret-must-not-return')
+  })
+
   it('answers an unregistered namespace exactly like an unexposed one', async () => {
     // Deliberately indistinguishable: separating "does not exist" from
     // "exists but is not yours to configure" would let a caller enumerate the
@@ -583,7 +618,7 @@ describe('settings domain', () => {
     expect(value.writable).toBe(false)
     const error = expectErr(await api.settings.update(request({ ns: 'llm-deepseek', patch: {} })))
     expect(error.code).toBe('settings-rejected')
-    expect(error.message).toContain('read-only')
+    expect(error.message).toContain('was rejected')
   })
 })
 

@@ -306,8 +306,8 @@ export class DynamicCordisPackageRunner {
    * @param pluginId - stable Plugin identity.
    * @param pluginRunId - exact activation being retracted; a newer run survives.
    */
-  retract(pluginId: CordisDynamicPluginId, pluginRunId: CordisDynamicPluginRunId): void {
-    void this.enqueue(pluginId, async () => {
+  retract(pluginId: CordisDynamicPluginId, pluginRunId: CordisDynamicPluginRunId): Promise<void> {
+    return this.enqueue(pluginId, async () => {
       const current = this.live.get(pluginId)
       if (current === undefined || current.pkg.pluginRunId !== pluginRunId) return
       await this.teardown(pluginId, current.entryId, current.styles)

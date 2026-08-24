@@ -126,6 +126,7 @@ export class LocalBashExecutor extends ShellExecutor {
     assertServiceableBashConfig(entry)
     this.source = () => entry
     installSettingsSection(ctx, SHELL_SETTINGS_NAMESPACE, LocalBashExecutor.Config, entry, {
+      surfaces: ['configuration-client'],
       validate: assertServiceableBashConfig,
       setSource: (current) => {
         this.source = current as () => ResolvedConfig

@@ -124,6 +124,33 @@ describe('Agent', () => {
     expect(statuses).toEqual(['running', 'idle'])
   })
 
+  it('publishes idle before completion callbacks choose whether an injected notice needs a wake', async () => {
+    const adapter = new MockAdapter([textResponse('first'), textResponse('notice seen')])
+    const ctx = await harness(adapter)
+    const agent = ctx.agentLoop.create(SessionId('retirement-notice'), { provider: 'mock', model: 'mock' })
+    let queued = false
+    ctx.on('session/event', (session, event) => {
+      if (session !== agent.session || event.type !== 'turn/end' || queued) return
+      queued = true
+      queueMicrotask(() => {
+        const notice = createUserMessage({
+          content: [{ type: 'text', text: 'background job finished' }],
+          source: { kind: 'plugin', plugin: 'tool-jobs' },
+        })
+        if (agent.status === 'idle') agent.followup(notice)
+        else agent.inject(notice)
+      })
+    })
+
+    send(agent, 'start')
+    await agent.whenIdle()
+    await Promise.resolve()
+    await agent.whenIdle()
+
+    expect(adapter.requests).toHaveLength(2)
+    expect(agent.session.events.filter(event => event.type === 'turn/start')).toHaveLength(2)
+  })
+
   it('whenIdle() resolves immediately without active work', async () => {
     const ctx = await harness(new MockAdapter([textResponse('ok')]))
     const agent = ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })

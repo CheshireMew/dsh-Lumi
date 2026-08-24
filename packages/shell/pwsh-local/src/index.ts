@@ -166,6 +166,7 @@ export class PwshLocalExecutor extends ShellExecutor {
     this.declaredPwshPath = entry.pwshPath
     this.resolvedPwshPath = resolvePwshPath(entry.pwshPath)
     installSettingsSection(ctx, SHELL_SETTINGS_NAMESPACE, PwshLocalExecutor.Config, entry, {
+      surfaces: ['configuration-client'],
       validate: assertServiceablePwshConfig,
       setSource: (current) => {
         this.source = current as () => ResolvedConfig

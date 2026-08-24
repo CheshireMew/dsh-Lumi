@@ -7,8 +7,10 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import type { ApiProxy, GoalRef, HostFrame, MuxFrame, RpcMessage, RpcRequest, RpcResponse } from '@deepseek-ai/dsh-host-apiproxy'
-import { InProcessApiClient, RpcId, toFetchHandler } from '@deepseek-ai/dsh-host-apiproxy'
+import type { ApiProxy, GoalRef, HostFrame, MuxFrame, RpcMessage, RpcRequest, RpcResponse } from '@deepseek-ai/dsh-api-protocol/api'
+import { RpcId } from '@deepseek-ai/dsh-api-protocol/api'
+import { InProcessApiClient } from '@deepseek-ai/dsh-api-protocol/client'
+import { toFetchHandler } from '@deepseek-ai/dsh-api-protocol/handler'
 
 const sid = (id: string): SessionId => id as SessionId
 
@@ -36,6 +38,7 @@ function scriptedApi(overrides: {
   return {
     sessions: {
       list: r => ok(r, { items: [] }),
+      delete: r => ok(r, { deletedSessionIds: [r.payload.sessionId] }),
       search: r => ok(r, { items: [], hasMore: false }),
       create: r => ok(r, { sessionId: sid('s-new') }),
       history: r => ok(r, {
@@ -88,6 +91,7 @@ function scriptedApi(overrides: {
       insertBefore: r => ok(r, { workspaceIds: [r.payload.workspaceId] }),
       insertSessionBefore: r => ok(r, { workspace: { workspaceId: 'w1' as never, path: '/t', title: 't', sessionIds: [], createdAt: '0', updatedAt: '0' } }),
       archiveSession: r => ok(r, { archivedSessionIds: [r.payload.sessionId] }),
+      unarchiveSession: r => ok(r, { archivedSessionIds: [] }),
     },
     skills: { list: r => ok(r, { skills: [] }), ...overrides.skills },
     agentPresets: {
@@ -217,6 +221,26 @@ describe('unary round trip', () => {
     const response = await client(api).sessions.fork({ sessionId: sid('s-parent'), atSeq: 7 })
     expect(seen?.payload).toEqual({ sessionId: 's-parent', atSeq: 7 })
     expect(response.result).toEqual({ ok: true, value: { sessionId: 's-child' } })
+  })
+
+  it('routes recursive Session deletion and validates the confirmed identity list', async () => {
+    let seen: RpcRequest<{ sessionId: SessionId; recursive?: boolean }> | undefined
+    const api = scriptedApi({
+      sessions: {
+        delete: (current) => {
+          seen = current
+          return ok(current, { deletedSessionIds: [sid('s-child'), sid('s-parent')] })
+        },
+      },
+    })
+
+    const response = await client(api).sessions.delete({ sessionId: sid('s-parent'), recursive: true })
+
+    expect(seen?.payload).toEqual({ sessionId: 's-parent', recursive: true })
+    expect(response.result).toEqual({
+      ok: true,
+      value: { deletedSessionIds: ['s-child', 's-parent'] },
+    })
   })
 
   it('routes workspace rename, delete, and ordering through the wire', async () => {
@@ -433,6 +457,8 @@ describe('workspace domain round trip', () => {
     if (created.result.ok) expect(created.result.value.created).toBe(true)
     const archivedResponse = await c.workspace.archiveSession({ sessionId: 's-arch' as never })
     expect(archivedResponse.result).toEqual({ ok: true, value: { archivedSessionIds: ['s-arch'] } })
+    const restoredResponse = await c.workspace.unarchiveSession({ sessionId: 's-arch' as never })
+    expect(restoredResponse.result).toEqual({ ok: true, value: { archivedSessionIds: [] } })
   })
 
   it('rejects a pathless create payload at the handler schema', async () => {
