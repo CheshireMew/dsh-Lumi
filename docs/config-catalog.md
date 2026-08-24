@@ -407,10 +407,12 @@ export interface ConnectionConfig {
   trustedHosts?: string[]
   /** Maximum buffered JSON body for every `/api` request. */
   maxRequestBodyBytes?: number
+  /** Maximum decoded downstream frames retained by each browser WebSocket before reconnect. */
+  websocketInboxCapacity?: number
 }
 ```
 
-Source: [`packages/client/connection/src/index.ts:51`](../packages/client/connection/src/index.ts)
+Source: [`packages/client/connection/src/index.ts:52`](../packages/client/connection/src/index.ts)
 
 <a id="deepseek-aidsh-client-hmr"></a>
 
@@ -427,6 +429,20 @@ export interface Config {
 ```
 
 Source: [`packages/client/hmr/src/index.ts:31`](../packages/client/hmr/src/index.ts)
+
+<a id="deepseek-aidsh-client-runtime"></a>
+
+## `@deepseek-ai/dsh-client-runtime`
+
+```ts config-catalog
+/** Browser runtime deployment configuration. */
+export interface Config {
+  /** Maximum fully materialized Session scopes retained in the browser. */
+  maxResidentSessions?: number
+}
+```
+
+Source: [`packages/client/runtime/src/index.ts:7`](../packages/client/runtime/src/index.ts)
 
 <a id="deepseek-aidsh-code-runtime-worker-thread"></a>
 
@@ -757,6 +773,8 @@ export interface Config {
    * @default 100
    */
   sessionSearchProviderCallLimit?: number
+  /** Maximum undelivered frames retained by each event stream before reconnect recovery. */
+  eventQueueCapacity?: number
   /**
    * Maximum cold-session summaries resolved concurrently.
    * @default 16
@@ -767,11 +785,8 @@ export interface Config {
    * @default 60000
    */
   sessionListSnapshotTtlMs?: number
-  /**
-   * Maximum incomplete `session.list` observations retained in memory.
-   * @default 8
-   */
-  sessionListMaxSnapshots?: number
+  /** Dedicated SQLite path for the derived session-list index. */
+  sessionListIndexPath?: string
 }
 ```
 
@@ -3057,7 +3072,6 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-api-remotes` ([`packages/api/remotes/src/index.ts`](../packages/api/remotes/src/index.ts))
 - `@deepseek-ai/dsh-client-locale` ([`packages/client/locale/src/index.ts`](../packages/client/locale/src/index.ts))
 - `@deepseek-ai/dsh-client-modules` — requires `webServer` · `loader` ([`packages/client/modules/src/index.ts`](../packages/client/modules/src/index.ts))
-- `@deepseek-ai/dsh-client-runtime` ([`packages/client/runtime/src/index.ts`](../packages/client/runtime/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-agent-preset` ([`packages/client/ui-agent-preset/src/index.ts`](../packages/client/ui-agent-preset/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-commands` ([`packages/client/ui-commands/src/index.ts`](../packages/client/ui-commands/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-conversation` ([`packages/client/ui-conversation/src/index.ts`](../packages/client/ui-conversation/src/index.ts))
@@ -3117,7 +3131,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-tool-subagent-control` — requires `tools` · `subagents` ([`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts))
 - `@deepseek-ai/dsh-user-questions` ([`packages/interaction/user-questions/src/index.ts`](../packages/interaction/user-questions/src/index.ts))
 - `@deepseek-ai/dsh-workspace` — requires `storageDomain` · `sessionPersistence` ([`packages/workspace/workspace/src/index.ts`](../packages/workspace/workspace/src/index.ts))
-- `@dsh-lumi/bundle-desktop` ([`packages/bundle/lumi-desktop/src/index.ts`](../packages/bundle/lumi-desktop/src/index.ts))
+- `@dsh-lumi/bundle-desktop` — requires `llm` ([`packages/bundle/lumi-desktop/src/index.ts`](../packages/bundle/lumi-desktop/src/index.ts))
 - `@dsh-lumi/client-character` ([`packages/client/lumi-character/src/index.ts`](../packages/client/lumi-character/src/index.ts))
 - `@dsh-lumi/client-shell` ([`packages/client/lumi-shell/src/index.ts`](../packages/client/lumi-shell/src/index.ts))
 

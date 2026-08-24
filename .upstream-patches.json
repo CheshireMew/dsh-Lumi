@@ -148,7 +148,7 @@
     {
       "id": "architecture-regression-gates",
       "title": "Prevent downstream architecture regressions",
-      "reason": "The fork needs executable limits for dependency cycles, repaired source concentrations, product identity ownership, client colors, and its explicit upstream patch inventory.",
+      "reason": "The fork needs executable limits for dependency cycles, repaired source concentrations, source/artifact separation, product identity ownership, client colors, and its explicit upstream patch inventory.",
       "paths": [
         ".agents/notes/implemented/architecture/2026-08-23-architecture-cohesion-governance.i18n.yaml",
         ".agents/notes/implemented/architecture/2026-08-23-architecture-cohesion-governance.md",
@@ -173,6 +173,8 @@
         "scripts/verify-architecture-governance.spec.ts",
         "scripts/verify-architecture-governance.ts",
         "scripts/verify-client-domain-graph.ts",
+        "scripts/verify-source-tree-clean.spec.ts",
+        "scripts/verify-source-tree-clean.ts",
         "scripts/verify-upstream-patches.spec.ts",
         "scripts/verify-upstream-patches.ts",
         "tsconfig.base.json",
@@ -180,6 +182,7 @@
         "tsconfig.host.json"
       ],
       "validation": [
+        "pnpm run verify-source-tree-clean",
         "pnpm run verify-upstream-patches",
         "vitest run scripts/verify-upstream-patches.spec.ts scripts/verify-architecture-governance.spec.ts scripts/sync-upstream.spec.ts"
       ],
@@ -203,6 +206,128 @@
       "reviewedThrough": "47f943859bef60e4160492346772ded9b24f765a",
       "lastOutcome": "retain",
       "reviewNote": "Initial downstream registration at the currently validated official base."
+    },
+    {
+      "id": "bounded-desktop-performance-paths",
+      "title": "Bound high-cardinality desktop runtime paths",
+      "reason": "Official browser and Host paths otherwise retain unbounded event and Session state, rewrite high-frequency projection checkpoints through JSON, scan complete session catalogs and history prefixes on hot paths, and mount every sidebar row.",
+      "paths": [
+        ".agents/notes/implemented/architecture/2026-08-24-bounded-desktop-performance-paths.i18n.yaml",
+        ".agents/notes/implemented/architecture/2026-08-24-bounded-desktop-performance-paths.md",
+        ".agents/notes/implemented/architecture/2026-08-24-bounded-desktop-performance-paths.zh.md",
+        "apps/web/tests/complex-history.perf.ts",
+        "docs/config-catalog.i18n.yaml",
+        "docs/config-catalog.md",
+        "docs/config-catalog.zh.md",
+        "packages/api/remotes/**",
+        "packages/bundle/web-app/**",
+        "packages/client/connection/**",
+        "packages/client/runtime/**",
+        "packages/client/ui-workspace/**",
+        "packages/host/apiproxy/**",
+        "packages/session/session-projection-cache/README.i18n.yaml",
+        "packages/session/session-projection-cache/README.md",
+        "packages/session/session-projection-cache/README.zh.md",
+        "pnpm-lock.yaml"
+      ],
+      "validation": [
+        "pnpm run typecheck",
+        "vitest run packages/host/apiproxy/tests packages/api/remotes/tests/agent-lookup.spec.ts packages/client/connection/tests packages/client/runtime/tests packages/client/ui-workspace/tests packages/bundle/web-app/tests/performance-composition.spec.ts apps/desktop/tests/diagnostics.spec.ts",
+        "pnpm run verify-upstream-patches",
+        "pnpm run verify-translation-pairing"
+      ],
+      "retirement": "Retire each selector when official DSH provides equivalent bounded queues, indexed immutable session pagination, bounded browser residency, virtualized Workspace rows, row-level projection persistence, and linear history correlation.",
+      "reviewedThrough": "47f943859bef60e4160492346772ded9b24f765a",
+      "lastOutcome": "retain",
+      "reviewNote": "The downstream performance limits and repair semantics are absent from the currently validated official base."
+    },
+    {
+      "id": "recoverable-client-interactions",
+      "title": "Keep desktop client failures recoverable and keyboard paths complete",
+      "reason": "Official client surfaces otherwise strand users on startup and Workspace action failures, leave modal and menu keyboard behavior incomplete, present unconfirmed Workspace reorder results, and allow desktop DeepSeek credentials to be persisted before the unsaved key is verified against the provider.",
+      "paths": [
+        ".agents/notes/implemented/bug-fix/2026-08-24-recoverable-desktop-user-operations.i18n.yaml",
+        ".agents/notes/implemented/bug-fix/2026-08-24-recoverable-desktop-user-operations.md",
+        ".agents/notes/implemented/bug-fix/2026-08-24-recoverable-desktop-user-operations.zh.md",
+        "knip.json",
+        "packages/client/locale/tests/language-row.client.spec.tsx",
+        "packages/client/runtime/README.i18n.yaml",
+        "packages/client/runtime/README.md",
+        "packages/client/runtime/README.zh.md",
+        "packages/client/runtime/src/client/contract/workspaces.ts",
+        "packages/client/runtime/src/client/workspaces/service.ts",
+        "packages/client/runtime/tests/workspaces-service.client.spec.ts",
+        "packages/client/ui-agent-preset/src/client/index.ts",
+        "packages/client/ui-conversation/README.i18n.yaml",
+        "packages/client/ui-conversation/README.md",
+        "packages/client/ui-conversation/README.zh.md",
+        "packages/client/ui-conversation/src/client/locales.ts",
+        "packages/client/ui-conversation/src/client/skeleton/ConversationRoot.tsx",
+        "packages/client/ui-conversation/tests/chat-view.client.spec.tsx",
+        "packages/client/ui-conversation/tests/enter-behavior-row.client.spec.tsx",
+        "packages/client/ui-conversation/tests/gate-branch-tails.client.spec.tsx",
+        "packages/client/ui-conversation/tests/input-bar.client.spec.tsx",
+        "packages/client/ui-conversation/tests/input-matrix.client.spec.tsx",
+        "packages/client/ui-conversation/tests/input-scenarios.client.spec.tsx",
+        "packages/client/ui-conversation/tests/skeleton.client.spec.tsx",
+        "packages/client/ui-primitives/README.i18n.yaml",
+        "packages/client/ui-primitives/README.md",
+        "packages/client/ui-primitives/README.zh.md",
+        "packages/client/ui-primitives/src/Menu.tsx",
+        "packages/client/ui-primitives/src/Modal.tsx",
+        "packages/client/ui-primitives/tests/atoms.client.spec.tsx",
+        "packages/client/ui-sidebar/src/client/index.ts",
+        "packages/client/ui-settings-general/src/client/SettingsRoot.module.css",
+        "packages/client/ui-settings-general/src/client/SettingsRoot.tsx",
+        "packages/client/ui-settings-models/README.i18n.yaml",
+        "packages/client/ui-settings-models/README.md",
+        "packages/client/ui-settings-models/README.zh.md",
+        "packages/client/ui-settings-models/src/client/ModelListEditor.tsx",
+        "packages/client/ui-settings-models/src/client/OnboardingModal.tsx",
+        "packages/client/ui-settings-models/src/client/ProviderEditor.tsx",
+        "packages/client/ui-settings-models/src/client/locales.ts",
+        "packages/client/ui-settings-models/tests/onboarding-dialog.client.spec.tsx",
+        "packages/client/ui-theme/tests/appearance-row.client.spec.tsx",
+        "packages/client/ui-tool/tests/chat-code-subcalls.client.spec.tsx",
+        "packages/client/ui-tool/tests/diff-card.client.spec.tsx",
+        "packages/client/ui-tool/tests/read-card.client.spec.tsx",
+        "packages/client/ui-tool/tests/search-card.client.spec.tsx",
+        "packages/client/ui-tool/tests/terminal-card.client.spec.tsx",
+        "packages/client/ui-tool/tests/web-card.client.spec.tsx",
+        "packages/client/ui-trajectory/tests/views.client.spec.tsx",
+        "packages/client/ui-workspace/README.i18n.yaml",
+        "packages/client/ui-workspace/README.md",
+        "packages/client/ui-workspace/README.zh.md",
+        "packages/client/ui-workspace/src/client/WorkspaceBrowser.module.css",
+        "packages/client/ui-workspace/src/client/WorkspaceBrowser.tsx",
+        "packages/client/ui-workspace/src/client/contract/slots.ts",
+        "packages/client/ui-workspace/src/client/index.ts",
+        "packages/client/ui-workspace/src/client/locales.ts",
+        "packages/client/ui-workspace/src/client/workspace-browser-search.tsx",
+        "packages/client/ui-workspace/src/client/workspace-browser-sections.tsx",
+        "packages/client/ui-workspace/tests/apply.client.spec.ts",
+        "packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx",
+        "packages/client/ui-workspace/tests/workspace-picker.client.spec.tsx",
+        "packages/client/web/README.i18n.yaml",
+        "packages/client/web/README.md",
+        "packages/client/web/README.zh.md",
+        "packages/client/web/src/AppRoot.module.css",
+        "packages/client/web/src/AppRoot.tsx",
+        "packages/client/web/tests/app-root.client.spec.tsx",
+        "packages/test-support/client-runtime/src/fixtures.ts",
+        "packages/test-support/client-runtime/src/workspaces.ts",
+        "packages/test-support/client-runtime/tests/runtime.client.spec.tsx"
+      ],
+      "validation": [
+        "pnpm run typecheck:contracts-ready",
+        "vitest run packages/client/runtime/tests/workspaces-service.client.spec.ts packages/client/ui-conversation/tests/skeleton.client.spec.tsx packages/client/ui-workspace/tests/apply.client.spec.ts packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx packages/client/ui-primitives/tests/atoms.client.spec.tsx packages/client/ui-settings-models/tests/onboarding-dialog.client.spec.tsx packages/client/ui-settings-models/tests/provider-form.client.spec.tsx packages/client/web/tests/app-root.client.spec.tsx packages/bundle/lumi-desktop/tests/discovery.spec.ts",
+        "pnpm run verify-upstream-patches",
+        "pnpm run verify-translation-pairing"
+      ],
+      "retirement": "Retire when official DSH provides equivalent localized startup and Workspace-action recovery, Host-confirmed reorder presentation, complete modal and menu keyboard behavior, and pre-persistence provider verification for desktop credentials.",
+      "reviewedThrough": "47f943859bef60e4160492346772ded9b24f765a",
+      "lastOutcome": "retain",
+      "reviewNote": "The startup and Workspace recovery, keyboard, confirmed-reorder, and credential-verification behavior is absent from the currently validated official base."
     }
   ],
   "legacyBaseline": [
@@ -439,14 +564,6 @@
       "sha256": "deleted"
     },
     {
-      "path": ".agents/notes/proposed/architecture/2026-07-28-storage-root-and-derived-medium-recovery.md",
-      "sha256": "deleted"
-    },
-    {
-      "path": ".agents/notes/proposed/architecture/2026-07-28-storage-root-and-derived-medium-recovery.zh.md",
-      "sha256": "deleted"
-    },
-    {
       "path": ".agents/notes/proposed/architecture/2026-07-29-durable-last-activity-index.i18n.yaml",
       "sha256": "deleted"
     },
@@ -611,10 +728,6 @@
       "sha256": "8ca548c2319450fbbf52411cc4179de3ee4aa7e6d58b1b7f06a010c7a5176dd7"
     },
     {
-      "path": "apps/web/tests/complex-history.perf.ts",
-      "sha256": "3ec3d130ec946bc12075a95002c6ff8dc7595ebf02f66a3f5606f1cd23935b6d"
-    },
-    {
       "path": "apps/web/tests/hmr-live.e2e.ts",
       "sha256": "e4b2a8b8276b491db1418b5dff1cd631ecc8e4bbf0e878464485acd6b13145be"
     },
@@ -645,18 +758,6 @@
     {
       "path": "apps/web/tsconfig.json",
       "sha256": "39b91c247b17dace5462e84e0cd1df20b3aede7049176e01e7138fe6586d9f95"
-    },
-    {
-      "path": "docs/config-catalog.i18n.yaml",
-      "sha256": "997d37b8e4bbd507b1ccb08dfb4a93c7cc432fade025decce2cc07fbd297f5e2"
-    },
-    {
-      "path": "docs/config-catalog.md",
-      "sha256": "a3220801b93c30c9e8f58afc62a866f9685f11500b590c643db6d81abcc59f47"
-    },
-    {
-      "path": "docs/config-catalog.zh.md",
-      "sha256": "fcfc55b0b04974fe3054388b06563ddfa93edebe9c4be50b79a673fe5cdb4094"
     },
     {
       "path": "docs/development.i18n.yaml",
@@ -845,10 +946,6 @@
     {
       "path": "examples/jsonrpc-agent/tests/sdk.snapshot.ts",
       "sha256": "c0a2db925798cd2d25b7733982f9b9c4487558b1884935016df41540584f5c0e"
-    },
-    {
-      "path": "knip.json",
-      "sha256": "c278316226ed36ab5d36d7a2adddccb0211a2f92a5615c08a0247f45fd03dfff"
     },
     {
       "path": "packages/boot/app-boot/src/index.ts",
@@ -1151,18 +1248,6 @@
       "sha256": "057f6447dfa5559b4eb63623b135581aa328183d5cb46294753ee68d94a0aabc"
     },
     {
-      "path": "packages/session/session-projection-cache/README.i18n.yaml",
-      "sha256": "c77275dbbfe56227af819180f0db0e2a08c4b2007e2087f9720e43697e673cc3"
-    },
-    {
-      "path": "packages/session/session-projection-cache/README.md",
-      "sha256": "8e2590ea79201a41c2cfe56b363d2a6a62e6874599b2ea7b2d099c04f55f4025"
-    },
-    {
-      "path": "packages/session/session-projection-cache/README.zh.md",
-      "sha256": "c29d67141fa08ad2a9211e7e21ab86f3567e15e88bb621bdf0bc55926f801c7c"
-    },
-    {
       "path": "packages/session/session-projection-cache/src/index.ts",
       "sha256": "ae3fa3eb60a7bf9091e16aa84861d63f1492351600207a5df515348e1f368e1d"
     },
@@ -1289,10 +1374,6 @@
     {
       "path": "packages/test-support/client-runtime/src/settings-scope.ts",
       "sha256": "a91a9daa485b2a25442529d72f0593575e1c0e36cbe32e32c45b00861fee953c"
-    },
-    {
-      "path": "packages/test-support/client-runtime/src/workspaces.ts",
-      "sha256": "b1c659c34ae5cce1bf74449bea84981714bdc0eb72db92fb1e2e5b5a6c78deb1"
     },
     {
       "path": "packages/test-support/client-runtime/tsconfig.json",

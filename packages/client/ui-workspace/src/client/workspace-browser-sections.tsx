@@ -2,16 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   IconPersonalizationOutline16, Menu, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
-  SessionId, SessionListState, SessionSearchResultItem, WorkspaceId, WorkspaceView,
+  SessionId, SessionListState, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { WorkspaceBrowserProps } from './contract/slots.ts'
 import type { SessionNode, SessionOrderBy } from './tree.ts'
-import { ARCHIVED_KEY, deriveArchived, deriveFlat, deriveGroups, deriveSearchResults, UNGROUPED_KEY } from './tree.ts'
-import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './WorkspaceRows.tsx'
+import { ARCHIVED_KEY, deriveArchived, deriveFlat, deriveGroups, UNGROUPED_KEY } from './tree.ts'
+import { ProjectRowItem, SessionNodeItem } from './WorkspaceRows.tsx'
 import { FLAT_SESSION_ORDER_KEY } from './stores.ts'
 import css from './WorkspaceBrowser.module.css'
 
@@ -26,6 +27,31 @@ export const SEARCH_DEBOUNCE_MS = 250
 export const SEARCH_QUERY_MAX_CODE_UNITS = 500
 /** Session rows visible per Workspace before the local overflow control. */
 const COLLAPSED_SESSION_LIMIT = 5
+/** Logical rows above this count materialize only the visible scroll range. */
+export const SIDEBAR_VIRTUALIZATION_THRESHOLD = 80
+/** Sidebar viewport fallback used before layout observation is available. */
+const SIDEBAR_INITIAL_VIEWPORT_PX = 640
+/** Rows retained beyond both visible edges for smooth wheel and drag motion. */
+const SIDEBAR_VIRTUAL_OVERSCAN = 8
+
+type GroupedVirtualRow =
+  | { kind: 'project'; key: string; group: ReturnType<typeof deriveGroups>[number]; groupIndex: number; lastInGroup: boolean }
+  | { kind: 'session'; key: string; group: ReturnType<typeof deriveGroups>[number]; node: SessionNode; position: number; lastInGroup: boolean }
+  | { kind: 'overflow'; key: string; group: ReturnType<typeof deriveGroups>[number]; lastInGroup: true }
+
+type FlatVirtualRow =
+  | { kind: 'session'; key: string; node: SessionNode; archived: boolean; position: number }
+  | { kind: 'label'; key: 'archived-label' }
+
+function groupedVirtualRowHeight(row: GroupedVirtualRow, index: number): number {
+  if (row.kind === 'project') return index === 0 ? 34 : 38
+  if (row.kind === 'session') return 34
+  return 28
+}
+
+function flatVirtualRowHeight(row: FlatVirtualRow): number {
+  return row.kind === 'session' ? 34 : 32
+}
 
 /** Keep controlled input and RPC payload inside the session.search wire contract. */
 export function sanitizeSearchQuery(value: string): string {
@@ -195,6 +221,21 @@ interface WorkspaceDragState {
   over: { id: WorkspaceId; half: 'before' | 'after' } | null
 }
 
+/** User operation names shared with the browser-owned progress and failure notice. */
+export type WorkspaceActionKind =
+  | 'forkSession'
+  | 'archiveSession'
+  | 'unarchiveSession'
+  | 'reorderWorkspace'
+  | 'reorderSession'
+
+/** Run one Host action and commit its client view change only after Host acceptance. */
+export type RunWorkspaceAction = (
+  kind: WorkspaceActionKind,
+  operation: () => Promise<void>,
+  afterSuccess?: () => void,
+) => Promise<boolean>
+
 /** Resolve an insertion side from the full rendered workspace group. */
 function workspaceGroupHalf(e: { clientY: number; currentTarget: HTMLElement }): 'before' | 'after' {
   const rect = e.currentTarget.getBoundingClientRect()
@@ -235,6 +276,8 @@ type SessionTreeProps = Pick<
   onSessionDelete: (sessionId: SessionNode['id'], title: string) => void
   /** Session order behavior: fixed after edits, or additionally promoted by user activity. */
   orderBy: SessionOrderBy
+  /** Browser-owned progress, failure, and retry coordinator. */
+  runAction: RunWorkspaceAction
 }
 
 /** The scrolling session tree; unmounting drops the sessions subscription and expand-all state. */
@@ -242,6 +285,7 @@ export function SessionTree({
   useSessions, startSession, open, forkSession, workspaces, archivedSessionIds,
   onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onSessionUnarchive, onSessionDelete,
   insertWorkspaceBefore, insertSessionBefore, orderBy,
+  runAction,
   groupExpansion, setGroupExpanded,
   sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, t,
 }: SessionTreeProps) {
@@ -253,6 +297,7 @@ export function SessionTree({
   const sessionDropCommitted = useRef(false)
   const [workspaceDrag, setWorkspaceDrag] = useState<WorkspaceDragState | null>(null)
   const workspaceDropCommitted = useRef(false)
+  const listRef = useRef<HTMLDivElement>(null)
   const previousOrderBy = useRef(orderBy)
   const nativeDragActive = drag !== null || workspaceDrag !== null
   useNativeDragAcceptance(nativeDragActive)
@@ -319,6 +364,68 @@ export function SessionTree({
     }),
     [list, orderedWorkspaces, archivedSessionIds, expandedGroups, sessionOrderByAccount],
   )
+  const virtualRows = useMemo(() => groups.flatMap((group, groupIndex): GroupedVirtualRow[] => {
+    const sessions = expandedSessionGroups.includes(group.key)
+      ? group.sessions
+      : group.sessions.slice(0, COLLAPSED_SESSION_LIMIT)
+    const hasOverflow = group.sessions.length > COLLAPSED_SESSION_LIMIT
+    const rows: GroupedVirtualRow[] = [{
+      kind: 'project',
+      key: `${group.key}:project`,
+      group,
+      groupIndex,
+      lastInGroup: sessions.length === 0 && !hasOverflow,
+    }]
+    rows.push(...sessions.map((node, position): GroupedVirtualRow => ({
+      kind: 'session',
+      key: `${group.key}:session:${node.id}`,
+      group,
+      node,
+      position,
+      lastInGroup: position === sessions.length - 1 && !hasOverflow,
+    })))
+    if (hasOverflow) rows.push({
+      kind: 'overflow', key: `${group.key}:overflow`, group, lastInGroup: true,
+    })
+    return rows
+  }), [expandedSessionGroups, groups])
+  const virtualizationEnabled = virtualRows.length > SIDEBAR_VIRTUALIZATION_THRESHOLD
+  const rowVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: virtualizationEnabled ? virtualRows.length : 0,
+    enabled: virtualizationEnabled,
+    estimateSize: index => groupedVirtualRowHeight(virtualRows[index] as GroupedVirtualRow, index),
+    getItemKey: index => virtualRows[index]?.key ?? index,
+    getScrollElement: () => listRef.current,
+    initialRect: { width: 0, height: SIDEBAR_INITIAL_VIEWPORT_PX },
+    overscan: SIDEBAR_VIRTUAL_OVERSCAN,
+  })
+  const initialVirtualItems = useMemo(() => {
+    const items: Array<{ index: number; start: number }> = []
+    let start = 0
+    const end = SIDEBAR_INITIAL_VIEWPORT_PX + SIDEBAR_VIRTUAL_OVERSCAN * 38
+    for (const [index, row] of virtualRows.entries()) {
+      if (start > end) break
+      items.push({ index, start })
+      start += groupedVirtualRowHeight(row, index)
+    }
+    return items
+  }, [virtualRows])
+  const measuredVirtualItems = virtualizationEnabled ? rowVirtualizer.getVirtualItems() : []
+  // The sidebar can switch from folded to virtualized before its first layout
+  // observation. Seed the first viewport so that transition never flashes blank.
+  const virtualItems = measuredVirtualItems.length === 0 ? initialVirtualItems : measuredVirtualItems
+  const virtualGroupRanges = useMemo(() => {
+    const ranges: Array<{ group: GroupedVirtualRow['group']; start: number; end: number }> = []
+    let offset = 0
+    for (const [index, row] of virtualRows.entries()) {
+      const height = groupedVirtualRowHeight(row, index)
+      const previous = ranges.at(-1)
+      if (previous?.group.key === row.group.key) previous.end += height
+      else ranges.push({ group: row.group, start: offset, end: offset + height })
+      offset += height
+    }
+    return ranges
+  }, [virtualRows])
   const now = Date.now()
   const commitSessionDrag = (activeDrag: DragState, over: NonNullable<DragState['over']>): void => {
     if (sessionDropCommitted.current) return
@@ -342,11 +449,15 @@ export function SessionTree({
     const nextOrder = accountSessionIds.filter(id => id !== activeDrag.sessionId)
     const insertAt = anchor === undefined ? nextOrder.length : nextOrder.indexOf(anchor)
     nextOrder.splice(insertAt === -1 ? nextOrder.length : insertAt, 0, activeDrag.sessionId)
-    setSessionOrder(activeDrag.accountKey, nextOrder.map(id => id as string))
-    if (orderBy === 'updated' || activeDrag.accountKey === UNGROUPED_KEY) return
-    insertSessionBefore(activeDrag.accountKey as WorkspaceId, activeDrag.sessionId, anchor).catch((reason: unknown) => {
-      console.warn('session reorder rejected:', reason)
-    })
+    if (orderBy === 'updated' || activeDrag.accountKey === UNGROUPED_KEY) {
+      setSessionOrder(activeDrag.accountKey, nextOrder.map(id => id as string))
+      return
+    }
+    void runAction(
+      'reorderSession',
+      () => insertSessionBefore(activeDrag.accountKey as WorkspaceId, activeDrag.sessionId, anchor),
+      () => { setSessionOrder(activeDrag.accountKey, nextOrder.map(id => id as string)) },
+    )
   }
   const commitWorkspaceDrag = (
     activeDrag: WorkspaceDragState,
@@ -364,44 +475,219 @@ export function SessionTree({
       ? workspaces.length
       : workspaces.findIndex(workspace => workspace.workspaceId === anchor)
     if (sourceIndex !== -1 && (anchorIndex === sourceIndex || anchorIndex === sourceIndex + 1)) return
-    insertWorkspaceBefore(activeDrag.workspaceId, anchor).catch((reason: unknown) => {
-      console.warn('workspace reorder rejected:', reason)
-    })
+    void runAction('reorderWorkspace', () => insertWorkspaceBefore(activeDrag.workspaceId, anchor))
   }
   const workspaceDropAtListStart = groups[0]?.workspaceId !== undefined
     && workspaceDrag?.over?.id === groups[0].workspaceId
     && workspaceDrag.over.half === 'before'
 
+  /** Resolve a virtualized group in logarithmic time from a viewport drag coordinate. */
+  const virtualWorkspaceAt = (clientY: number): { id: WorkspaceId; half: 'before' | 'after' } | undefined => {
+    const element = listRef.current
+    if (element === null) return undefined
+    const y = clientY - element.getBoundingClientRect().top + element.scrollTop
+    let low = 0
+    let high = virtualGroupRanges.length - 1
+    while (low <= high) {
+      const middle = (low + high) >>> 1
+      const range = virtualGroupRanges[middle]
+      if (range === undefined) return undefined
+      if (y < range.start) high = middle - 1
+      else if (y >= range.end) low = middle + 1
+      else {
+        if (range.group.workspaceId === undefined) return undefined
+        return {
+          id: range.group.workspaceId,
+          half: y < range.start + (range.end - range.start) / 2 ? 'before' : 'after',
+        }
+      }
+    }
+    return undefined
+  }
+
+  const renderProjectRow = (group: GroupedVirtualRow['group'], groupIndex: number) => {
+    const workspaceId = group.workspaceId
+    const dragProps = workspaceId === undefined ? undefined : {
+      start: () => {
+        workspaceDropCommitted.current = false
+        setWorkspaceDrag({ workspaceId, over: null })
+      },
+      end: () => {
+        if (workspaceDrag?.over !== null && workspaceDrag?.over !== undefined) {
+          commitWorkspaceDrag(workspaceDrag, workspaceDrag.over)
+        } else {
+          setWorkspaceDrag(null)
+        }
+        workspaceDropCommitted.current = false
+      },
+    }
+    return (
+      <ProjectRowItem
+        group={group}
+        position={groupIndex + 1}
+        setSize={groups.length}
+        t={t}
+        onToggle={() => {
+          if (group.expanded) setExpandedSessionGroups(keys => keys.filter(key => key !== group.key))
+          setGroupExpanded(group.key, !group.expanded)
+        }}
+        onCreate={group.key === ARCHIVED_KEY ? undefined : () => {
+          if (group.workspaceId !== undefined) {
+            setGroupExpanded(group.key, true)
+            void startSession(group.workspaceId)
+          }
+        }}
+        drag={dragProps}
+        actions={group.workspaceId === undefined
+          ? undefined
+          : {
+            rename: () => {
+              /* v8 ignore next -- actions exist only for real Workspace groups. */
+              if (group.workspaceId !== undefined) onRenameRequest(group.workspaceId, group.label)
+            },
+            delete: () => {
+              /* v8 ignore next -- actions exist only for real Workspace groups. */
+              if (group.workspaceId !== undefined) onDeleteRequest(group.workspaceId, group.label)
+            },
+          }}
+      />
+    )
+  }
+
+  const renderSessionRow = (
+    group: GroupedVirtualRow['group'],
+    node: SessionNode,
+    position: number,
+  ) => {
+    const sameGroupDrag = drag !== null && drag.accountKey === group.key
+    const dragProps = group.key === ARCHIVED_KEY ? undefined : {
+      start: () => {
+        sessionDropCommitted.current = false
+        setDrag({ accountKey: group.key, sessionId: node.id, over: null })
+      },
+      active: sameGroupDrag,
+      marker: sameGroupDrag && drag.over?.id === node.id ? drag.over.half : null,
+      hover: (half: 'before' | 'after') => {
+        setDrag(currentDrag => currentDrag === null
+          ? currentDrag
+          : { ...currentDrag, over: { id: node.id, half } })
+      },
+      drop: (half: 'before' | 'after') => {
+        if (drag !== null) commitSessionDrag(drag, { id: node.id, half })
+      },
+      end: () => {
+        if (drag?.over !== null && drag?.over !== undefined) commitSessionDrag(drag, drag.over)
+        else setDrag(null)
+        sessionDropCommitted.current = false
+      },
+    }
+    return (
+      <SessionNodeItem
+        key={node.id}
+        node={node}
+        currentId={current}
+        now={now}
+        onOpen={open}
+        onRename={onSessionRename}
+        onFork={(sessionId) => { void runAction('forkSession', () => forkSession(sessionId)) }}
+        onArchive={onSessionArchive}
+        onUnarchive={onSessionUnarchive}
+        onDelete={onSessionDelete}
+        archived={group.key === ARCHIVED_KEY}
+        drag={dragProps}
+        position={position + 1}
+        setSize={group.sessions.length}
+        t={t}
+      />
+    )
+  }
+
   return (
     <div className={clsx(css.treeBody, css.wide)}>
       {workspaceDropAtListStart && <span className={css.listTopDropIndicator} aria-hidden="true" />}
       <div
+        ref={listRef}
         className={clsx(css.list, workspaceDropAtListStart && css.listTopDropActive)}
         role="tree"
         aria-label={t('section.sessions')}
+        onDragOver={!virtualizationEnabled || workspaceDrag === null
+          ? undefined
+          : (event) => {
+            const target = virtualWorkspaceAt(event.clientY)
+            if (target === undefined) return
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'move'
+            setWorkspaceDrag(active => active === null ? active : { ...active, over: target })
+          }}
+        onDrop={!virtualizationEnabled || workspaceDrag === null
+          ? undefined
+          : (event) => {
+            const target = virtualWorkspaceAt(event.clientY)
+            if (target === undefined) return
+            event.preventDefault()
+            commitWorkspaceDrag(workspaceDrag, target)
+          }}
       >
         {groups.length === 0 && (
           <div className={css.empty}>{t('empty.none')}</div>
         )}
-        {groups.map((group) => {
+        {virtualizationEnabled && (
+          <div
+            className={css.virtualCanvas}
+            style={{ height: rowVirtualizer.getTotalSize() }}
+            data-logical-tree-rows={virtualRows.length}
+          >
+            {virtualItems.map((item) => {
+              const row = virtualRows[item.index]
+              if (row === undefined) return null
+              const workspaceMarker = row.group.workspaceId !== undefined
+                && workspaceDrag?.over?.id === row.group.workspaceId
+                ? workspaceDrag.over.half
+                : null
+              const markerBefore = row.kind === 'project'
+                && workspaceMarker === 'before'
+                && !(item.index === 0 && workspaceDropAtListStart)
+              const markerAfter = row.lastInGroup && workspaceMarker === 'after'
+              return (
+                <div
+                  key={row.key}
+                  className={clsx(
+                    css.virtualItem,
+                    markerBefore && css.workspaceDropBefore,
+                    markerAfter && css.workspaceDropAfter,
+                  )}
+                  style={{
+                    height: groupedVirtualRowHeight(row, item.index),
+                    transform: `translateY(${String(item.start)}px)`,
+                    paddingTop: row.kind === 'project' && item.index > 0
+                      ? 4
+                      : row.kind === 'session' ? 2 : 0,
+                  }}
+                >
+                  {row.kind === 'project' && renderProjectRow(row.group, row.groupIndex)}
+                  {row.kind === 'session' && renderSessionRow(row.group, row.node, row.position)}
+                  {row.kind === 'overflow' && (
+                    <button
+                      type="button"
+                      className={css.sessionOverflowButton}
+                      aria-expanded={expandedSessionGroups.includes(row.group.key)}
+                      onClick={() => { setExpandedSessionGroups(keys => toggled(keys, row.group.key)) }}
+                    >
+                      {expandedSessionGroups.includes(row.group.key)
+                        ? t('sessions.collapse')
+                        : t('sessions.expand', { n: row.group.sessions.length - COLLAPSED_SESSION_LIMIT })}
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {!virtualizationEnabled && groups.map((group, groupIndex) => {
           const workspaceId = group.workspaceId
           const workspaceMarker = workspaceId !== undefined && workspaceDrag?.over?.id === workspaceId
             ? workspaceDrag.over.half
             : null
-          const workspaceDragProps = workspaceId === undefined ? undefined : {
-            start: () => {
-              workspaceDropCommitted.current = false
-              setWorkspaceDrag({ workspaceId, over: null })
-            },
-            end: () => {
-              if (workspaceDrag?.over !== null && workspaceDrag?.over !== undefined) {
-                commitWorkspaceDrag(workspaceDrag, workspaceDrag.over)
-              } else {
-                setWorkspaceDrag(null)
-              }
-              workspaceDropCommitted.current = false
-            },
-          }
           const hoverWorkspace = workspaceId === undefined
             ? undefined
             : (half: 'before' | 'after') => {
@@ -440,82 +726,11 @@ export function SessionTree({
                   dropWorkspace(workspaceGroupHalf(e))
                 }}
             >
-              <ProjectRowItem
-                group={group}
-                t={t}
-                onToggle={() => {
-                  if (group.expanded) {
-                    setExpandedSessionGroups(keys => keys.filter(key => key !== group.key))
-                  }
-                  setGroupExpanded(group.key, !group.expanded)
-                }}
-                onCreate={group.key === ARCHIVED_KEY ? undefined : () => {
-                  if (group.workspaceId !== undefined) {
-                    setGroupExpanded(group.key, true)
-                    startSession(group.workspaceId)
-                  }
-                }}
-                drag={workspaceDragProps}
-                actions={group.workspaceId === undefined
-                  ? undefined
-                  : {
-                    rename: () => {
-                    /* v8 ignore next -- narrowing guard: the actions object exists only for real-workspace groups. */
-                      if (group.workspaceId !== undefined) onRenameRequest(group.workspaceId, group.label)
-                    },
-                    delete: () => {
-                    /* v8 ignore next -- narrowing guard: the actions object exists only for real-workspace groups. */
-                      if (group.workspaceId !== undefined) onDeleteRequest(group.workspaceId, group.label)
-                    },
-                  }}
-              />
+              {renderProjectRow(group, groupIndex)}
               {(expandedSessionGroups.includes(group.key)
                 ? group.sessions
                 : group.sessions.slice(0, COLLAPSED_SESSION_LIMIT)
-              ).map((node) => {
-              // Session drag never leaves its group. Ungrouped writes only the
-              // browser-local account; real Workspaces may also write Host order.
-                const sameGroupDrag = drag !== null && drag.accountKey === group.key
-                const dragProps = group.key === ARCHIVED_KEY ? undefined : {
-                  start: () => {
-                    sessionDropCommitted.current = false
-                    setDrag({ accountKey: group.key, sessionId: node.id, over: null })
-                  },
-                  active: sameGroupDrag,
-                  marker: sameGroupDrag && drag.over?.id === node.id ? drag.over.half : null,
-                  hover: (half: 'before' | 'after') => {
-                  /* v8 ignore next -- narrowing guard: Rows gates hover on `active`, which is false while the drag state is null. */
-                    setDrag(d => (d === null ? d : { ...d, over: { id: node.id, half } }))
-                  },
-                  drop: (half: 'before' | 'after') => {
-                  /* v8 ignore next -- narrowing guard: Rows gates drop on `active`, which is false while the drag state is null. */
-                    if (drag === null) return
-                    commitSessionDrag(drag, { id: node.id, half })
-                  },
-                  end: () => {
-                    if (drag?.over !== null && drag?.over !== undefined) commitSessionDrag(drag, drag.over)
-                    else setDrag(null)
-                    sessionDropCommitted.current = false
-                  },
-                }
-                return (
-                  <SessionNodeItem
-                    key={node.id}
-                    node={node}
-                    currentId={current}
-                    now={now}
-                    onOpen={open}
-                    onRename={onSessionRename}
-                    onFork={forkSession}
-                    onArchive={onSessionArchive}
-                    onUnarchive={onSessionUnarchive}
-                    onDelete={onSessionDelete}
-                    archived={group.key === ARCHIVED_KEY}
-                    drag={dragProps}
-                    t={t}
-                  />
-                )
-              })}
+              ).map((node, position) => renderSessionRow(group, node, position))}
               {group.sessions.length > COLLAPSED_SESSION_LIMIT && (
                 <button
                   type="button"
@@ -541,7 +756,7 @@ export function SessionTree({
 export function FlatList({
   useSessions, open, forkSession, onSessionRename, onSessionArchive, onSessionUnarchive, onSessionDelete,
   archivedSessionIds,
-  orderBy, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, t,
+  orderBy, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, runAction, t,
 }: Pick<
   SessionTreeProps,
   | 'useSessions'
@@ -557,6 +772,7 @@ export function FlatList({
   | 'sessionUpdatedAtByAccount'
   | 'syncSessionOrderAccount'
   | 'setSessionOrder'
+  | 'runAction'
   | 't'
 >) {
   const list = useSessions(s => s)
@@ -598,6 +814,7 @@ export function FlatList({
   }, [baseRows, sessionOrderByAccount, sessionIds])
   const [drag, setDrag] = useState<DragState | null>(null)
   const dropCommitted = useRef(false)
+  const flatListRef = useRef<HTMLDivElement>(null)
   useNativeDragAcceptance(drag !== null)
   const commitDrag = (activeDrag: DragState, over: NonNullable<DragState['over']>): void => {
     if (dropCommitted.current) return
@@ -616,141 +833,134 @@ export function FlatList({
     setSessionOrder(FLAT_SESSION_ORDER_KEY, nextOrder.map(id => id as string))
   }
   const now = Date.now()
+  const flatVirtualRows = useMemo<FlatVirtualRow[]>(() => [
+    ...rows.map((node, position): FlatVirtualRow => ({
+      kind: 'session', key: `active:${node.id}`, node, archived: false, position,
+    })),
+    ...archivedRows.length === 0
+      ? []
+      : [
+        { kind: 'label' as const, key: 'archived-label' as const },
+        ...archivedRows.map((node, archivedPosition): FlatVirtualRow => ({
+          kind: 'session',
+          key: `archived:${node.id}`,
+          node,
+          archived: true,
+          position: rows.length + archivedPosition,
+        })),
+      ],
+  ], [archivedRows, rows])
+  const flatVirtualizationEnabled = flatVirtualRows.length > SIDEBAR_VIRTUALIZATION_THRESHOLD
+  const flatVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: flatVirtualizationEnabled ? flatVirtualRows.length : 0,
+    enabled: flatVirtualizationEnabled,
+    estimateSize: index => flatVirtualRowHeight(flatVirtualRows[index] as FlatVirtualRow),
+    getItemKey: index => flatVirtualRows[index]?.key ?? index,
+    getScrollElement: () => flatListRef.current,
+    initialRect: { width: 0, height: SIDEBAR_INITIAL_VIEWPORT_PX },
+    overscan: SIDEBAR_VIRTUAL_OVERSCAN,
+  })
+  const initialFlatVirtualItems = useMemo(() => {
+    const items: Array<{ index: number; start: number }> = []
+    let start = 0
+    const end = SIDEBAR_INITIAL_VIEWPORT_PX + SIDEBAR_VIRTUAL_OVERSCAN * 34
+    for (const [index, row] of flatVirtualRows.entries()) {
+      if (start > end) break
+      items.push({ index, start })
+      start += flatVirtualRowHeight(row)
+    }
+    return items
+  }, [flatVirtualRows])
+  const measuredFlatVirtualItems = flatVirtualizationEnabled ? flatVirtualizer.getVirtualItems() : []
+  const flatVirtualItems = measuredFlatVirtualItems.length === 0
+    ? initialFlatVirtualItems
+    : measuredFlatVirtualItems
+  const flatTreeItemCount = rows.length + archivedRows.length
+  const renderFlatSession = (node: SessionNode, archived: boolean, position: number) => {
+    const active = drag !== null
+    return (
+      <SessionNodeItem
+        key={`${archived ? 'archived' : 'active'}:${node.id}`}
+        node={node}
+        currentId={list.current}
+        now={now}
+        onOpen={open}
+        onRename={onSessionRename}
+        onFork={(sessionId) => { void runAction('forkSession', () => forkSession(sessionId)) }}
+        onArchive={onSessionArchive}
+        onUnarchive={onSessionUnarchive}
+        onDelete={onSessionDelete}
+        archived={archived}
+        flat
+        position={position + 1}
+        setSize={flatTreeItemCount}
+        drag={archived
+          ? undefined
+          : {
+            start: () => {
+              dropCommitted.current = false
+              setDrag({ accountKey: FLAT_SESSION_ORDER_KEY, sessionId: node.id, over: null })
+            },
+            active,
+            marker: active && drag.over?.id === node.id ? drag.over.half : null,
+            hover: (half) => {
+              setDrag(currentDrag => currentDrag === null
+                ? currentDrag
+                : { ...currentDrag, over: { id: node.id, half } })
+            },
+            drop: (half) => {
+              if (drag !== null) commitDrag(drag, { id: node.id, half })
+            },
+            end: () => {
+              if (drag?.over !== null && drag?.over !== undefined) commitDrag(drag, drag.over)
+              else setDrag(null)
+              dropCommitted.current = false
+            },
+          }}
+        t={t}
+      />
+    )
+  }
   return (
     <div className={clsx(css.treeBody, css.wide)}>
-      <div className={clsx(css.list, css.flatList)} role="tree" aria-label={t('section.sessions')}>
+      <div ref={flatListRef} className={clsx(css.list, css.flatList)} role="tree" aria-label={t('section.sessions')}>
         {rows.length === 0 && archivedRows.length === 0 && (
           <div className={css.empty}>{t('empty.none')}</div>
         )}
-        {rows.map((node) => {
-          const active = drag !== null
-          return (
-            <SessionNodeItem
-              key={node.id}
-              node={node}
-              currentId={list.current}
-              now={now}
-              onOpen={open}
-              onRename={onSessionRename}
-              onFork={forkSession}
-              onArchive={onSessionArchive}
-              onUnarchive={onSessionUnarchive}
-              onDelete={onSessionDelete}
-              flat
-              drag={{
-                start: () => {
-                  dropCommitted.current = false
-                  setDrag({ accountKey: FLAT_SESSION_ORDER_KEY, sessionId: node.id, over: null })
-                },
-                active,
-                marker: active && drag.over?.id === node.id ? drag.over.half : null,
-                hover: (half) => {
-                  setDrag(current => current === null ? current : { ...current, over: { id: node.id, half } })
-                },
-                drop: (half) => {
-                  if (drag !== null) commitDrag(drag, { id: node.id, half })
-                },
-                end: () => {
-                  if (drag?.over !== null && drag?.over !== undefined) commitDrag(drag, drag.over)
-                  else setDrag(null)
-                  dropCommitted.current = false
-                },
-              }}
-              t={t}
-            />
-          )
-        })}
-        {archivedRows.length > 0 && (
+        {flatVirtualizationEnabled && (
+          <div
+            className={css.virtualCanvas}
+            style={{ height: flatVirtualizer.getTotalSize() }}
+            data-logical-tree-rows={flatVirtualRows.length}
+          >
+            {flatVirtualItems.map((item) => {
+              const row = flatVirtualRows[item.index]
+              if (row === undefined) return null
+              return (
+                <div
+                  key={row.key}
+                  className={css.virtualItem}
+                  style={{
+                    height: flatVirtualRowHeight(row),
+                    transform: `translateY(${String(item.start)}px)`,
+                    paddingTop: row.kind === 'session' ? 2 : 0,
+                  }}
+                >
+                  {row.kind === 'label'
+                    ? <div className={css.flatSectionLabel}>{t('group.archived')}</div>
+                    : renderFlatSession(row.node, row.archived, row.position)}
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {!flatVirtualizationEnabled && rows.map((node, position) => renderFlatSession(node, false, position))}
+        {!flatVirtualizationEnabled && archivedRows.length > 0 && (
           <div className={css.flatSectionLabel}>{t('group.archived')}</div>
         )}
-        {archivedRows.map(node => (
-          <SessionNodeItem
-            key={node.id}
-            node={node}
-            currentId={list.current}
-            now={now}
-            onOpen={open}
-            onRename={onSessionRename}
-            onFork={forkSession}
-            onArchive={onSessionArchive}
-            onUnarchive={onSessionUnarchive}
-            onDelete={onSessionDelete}
-            archived
-            flat
-            t={t}
-          />
+        {!flatVirtualizationEnabled && archivedRows.map((node, archivedPosition) => (
+          renderFlatSession(node, true, rows.length + archivedPosition)
         ))}
-      </div>
-      <span className={css.fade} />
-    </div>
-  )
-}
-
-export interface RemoteSearchState {
-  query: string
-  status: 'idle' | 'loading' | 'ready' | 'error'
-  items: readonly SessionSearchResultItem[]
-  hasMore: boolean
-}
-
-/** Flat search body: local metadata matches plus the current Host result page. */
-export function SearchResults({
-  useSessions,
-  open,
-  workspaces,
-  archivedSessionIds,
-  query,
-  remote,
-  resultLimit,
-  t,
-}: Pick<SessionTreeProps, 'useSessions' | 'open' | 't'> & {
-  workspaces: readonly WorkspaceView[]
-  archivedSessionIds: readonly SessionNode['id'][]
-  query: string
-  remote: RemoteSearchState
-  resultLimit: number
-}) {
-  const list = useSessions(s => s)
-  const currentRemote = remote.query === query
-    ? remote
-    : { query, status: 'loading' as const, items: [], hasMore: false }
-  const results = useMemo(
-    () => deriveSearchResults(list, workspaces, query, archivedSessionIds, currentRemote, resultLimit),
-    [list, workspaces, query, archivedSessionIds, currentRemote, resultLimit],
-  )
-  const pending = currentRemote.status === 'loading'
-  const failed = currentRemote.status === 'error'
-
-  return (
-    <div className={clsx(css.treeBody, css.wide)}>
-      <div className={css.list}>
-        <div className={css.searchTree} role="tree" aria-label={t('search.results.aria')}>
-          {results.items.map(result => (
-            <SearchResultItem
-              key={result.id}
-              result={result}
-              currentId={list.current}
-              onOpen={open}
-              t={t}
-            />
-          ))}
-        </div>
-        {pending && (
-          <div className={css.searchStatus} role="status">{t('search.pending')}</div>
-        )}
-        {failed && (
-          <div className={css.searchWarning} role="status">
-            {t('search.unavailable')}
-          </div>
-        )}
-        {!pending && results.items.length === 0 && (
-          <div className={css.empty}>{t('search.noMatches')}</div>
-        )}
-        {results.hasMore && (
-          <div className={css.searchStatus}>
-            {t('search.hasMore', { n: resultLimit })}
-          </div>
-        )}
       </div>
       <span className={css.fade} />
     </div>

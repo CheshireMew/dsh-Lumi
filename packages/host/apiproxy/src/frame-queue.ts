@@ -4,11 +4,33 @@ import type { JobSnapshot } from '@deepseek-ai/dsh-jobs'
 import type { JobView, MuxFrame } from '@deepseek-ai/dsh-api-protocol/api'
 import { RpcId, type RpcRequest } from '@deepseek-ai/dsh-api-protocol/api/rpc'
 
-/** Async frame queue whose iterator owns abort and cleanup handling. */
+const EMPTY_QUEUE_SLOT = Symbol('empty frame queue slot')
+
+/** Queue overflow reported to the stream carrier so reconnect can rebuild from authoritative state. */
+export class FrameQueueOverflowError extends Error {
+  constructor(capacity: number) {
+    super(`event stream queue exceeded its ${capacity} frame capacity`)
+    this.name = 'FrameQueueOverflowError'
+  }
+}
+
+/** Bounded async frame queue whose iterator owns abort and cleanup handling. */
 export class FrameQueue<F> {
-  private buffer: F[] = []
+  private readonly buffer: Array<F | typeof EMPTY_QUEUE_SLOT>
+  private head = 0
+  private tail = 0
+  private size = 0
   private waiter: (() => void) | undefined
   private done = false
+  private failure: Error | undefined
+
+  /** @param capacity - Maximum undelivered frames retained before the stream fails. */
+  constructor(private readonly capacity: number) {
+    if (!Number.isSafeInteger(capacity) || capacity < 1) {
+      throw new RangeError('frame queue capacity must be a positive safe integer')
+    }
+    this.buffer = new Array<F | typeof EMPTY_QUEUE_SLOT>(capacity).fill(EMPTY_QUEUE_SLOT)
+  }
 
   /**
    * Publish one frame unless the queue is closed.
@@ -16,7 +38,16 @@ export class FrameQueue<F> {
    */
   push(item: F): void {
     if (this.done) return
-    this.buffer.push(item)
+    if (this.size === this.capacity) {
+      this.failure = new FrameQueueOverflowError(this.capacity)
+      this.done = true
+      this.clear()
+      this.waiter?.()
+      return
+    }
+    this.buffer[this.tail] = item
+    this.tail = (this.tail + 1) % this.capacity
+    this.size += 1
     this.waiter?.()
   }
 
@@ -37,7 +68,8 @@ export class FrameQueue<F> {
     signal.addEventListener('abort', onAbort, { once: true })
     try {
       while (true) {
-        while (this.buffer.length > 0) yield this.buffer.shift() as F
+        while (this.size > 0) yield this.shift()
+        if (this.failure !== undefined) throw this.failure
         if (this.done || signal.aborted) return
         await new Promise<void>((resolve) => { this.waiter = resolve })
         this.waiter = undefined
@@ -46,6 +78,25 @@ export class FrameQueue<F> {
       signal.removeEventListener('abort', onAbort)
       cleanup()
     }
+  }
+
+  /** Remove one frame in constant time. */
+  private shift(): F {
+    const item = this.buffer[this.head] as F | typeof EMPTY_QUEUE_SLOT
+    /* v8 ignore next -- size is the authoritative occupancy count. */
+    if (item === EMPTY_QUEUE_SLOT) throw new Error('frame queue occupancy is inconsistent')
+    this.buffer[this.head] = EMPTY_QUEUE_SLOT
+    this.head = (this.head + 1) % this.capacity
+    this.size -= 1
+    return item
+  }
+
+  /** Release retained frames after overflow; the reconnect baseline replaces them. */
+  private clear(): void {
+    this.buffer.fill(EMPTY_QUEUE_SLOT)
+    this.head = 0
+    this.tail = 0
+    this.size = 0
   }
 }
 

@@ -6,6 +6,8 @@ Web 外壳内核：`new AppWebEntry(el, seams?).run()` 通过两阶段启动（w
 
 外壳自给自足（web2 硬性规则）：内核不对任何插件包执行值导入；启动状态 store 与信号在这里手写（`loader-status.ts`），因此即使插件失败，加载页面仍能工作，而此时这一点尤其重要。app-shell 组装（`@deepseek-ai/dsh-client-app-shell`，由外壳拥有、背后没有 npm 包的伪配置项）是唯一通过 `registerStatic` 注册的模块；它与任何插件一样，通过 inject 等待 slots/sessions/layout。
 
+启动失败仍是可操作的外壳状态，而不是原始异常页。AppRoot 会本地化面向用户的摘要，默认收起技术诊断，并提供重试、桌面 Harness 重启、打开日志目录和复制诊断操作；恢复操作自身失败时会持续显示，同时保留最初的失败信息。
+
 `PLATFORM_MODULES`（src/platform.ts）是共享模块接口的唯一真源：种子表 key、tsdown 客户端 external 和 vite alias 集都是它的投影。
 
 可选的覆盖参数 `seams` 会为外部 `<script>` 执行无法到达页面上下文的环境转发模块系统的 `loadBundle` 传输覆盖（`BootSeams`）；普通浏览器调用方省略此参数。
@@ -22,5 +24,5 @@ Web 外壳内核：`new AppWebEntry(el, seams?).run()` 通过两阶段启动（w
 
 ## 已知限制与暂缓事项
 
-- **有意采用一次性渲染**：UI 等待启动 settle；只要一个配置项失败，加载页面就会保留并逐项显示醒目的报告，不提供部分可用性（渐进式渲染将作为独立项目恢复）。
+- **有意采用一次性渲染**：UI 等待启动 settle；只要一个配置项失败，恢复页面就会保留逐项报告和恢复操作，但不提供应用的部分可用性（渐进式渲染将作为独立项目恢复）。
 - **窄窗口外壳行为缺少组装后演练**：ui-layout 已实现让步链，但该包没有外壳级窄视口验收用例。

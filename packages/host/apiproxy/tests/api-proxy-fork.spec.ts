@@ -172,6 +172,11 @@ describe('sessions.fork', () => {
     ] as SessionEvent[]
     ctx.provide('sessionPersistence', {
       list: () => Promise.resolve([header]),
+      listSnapshots: () => Promise.resolve([{
+        header,
+        lastPromptAt: null,
+        revision: 'fork-test:cold',
+      }]),
       inspect: () => Promise.resolve({ meta: header, events }),
     } as never)
     ctx.provide('sessionQuery', {

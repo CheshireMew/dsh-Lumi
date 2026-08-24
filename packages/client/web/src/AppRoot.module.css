@@ -45,10 +45,66 @@
 }
 
 .failed {
-  max-width: 480px;
+  width: min(560px, calc(100vw - 48px));
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.failedDescription,
+.actionError {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.actions button {
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.actions button:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.actions button:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+.actions .primaryAction {
+  border-color: transparent;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-inverted);
+}
+
+.actionError {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.details {
+  margin-top: 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.details summary {
+  width: fit-content;
+  cursor: pointer;
 }
 
 .failedTitle {
@@ -59,6 +115,14 @@
 }
 
 .failedItem {
+  max-height: 220px;
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  white-space: pre-wrap;
+  word-break: break-word;
   font-family: var(--ds-font-family-code, ui-monospace, 'SF Mono', Menlo, Consolas, 'Courier New');
   font-size: 12px;
   line-height: 18px;

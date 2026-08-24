@@ -30,12 +30,17 @@ interface ToolCallData {
  * Build the session and host event streams over one shared interaction broker.
  * @param ctx - Host context carrying event sources.
  * @param interactions - Broker for question, approval, and queue frames.
+ * @param queueCapacity - Maximum undelivered frames retained per stream.
  * @returns Session and host event-stream methods.
  */
-export function createEventsApi(ctx: Context, interactions: InteractionBroker): ApiProxy['events'] {
+export function createEventsApi(
+  ctx: Context,
+  interactions: InteractionBroker,
+  queueCapacity: number,
+): ApiProxy['events'] {
   return {
     mux(_request, signal) {
-      const queue = new FrameQueue<RpcRequest<MuxFrame>>()
+      const queue = new FrameQueue<RpcRequest<MuxFrame>>(queueCapacity)
       interactions.attach(queue)
       for (const session of ctx.sessions.list()) subscribeSession(queue, session)
       for (const session of ctx.sessions.list()) {
@@ -123,7 +128,7 @@ export function createEventsApi(ctx: Context, interactions: InteractionBroker): 
     },
 
     host(_request, signal) {
-      const queue = new FrameQueue<RpcRequest<HostFrame>>()
+      const queue = new FrameQueue<RpcRequest<HostFrame>>(queueCapacity)
       const committedWorkspaces = ctx.workspaceRegistry.list()
       const committedWorkspaceIds = new Set(committedWorkspaces.map(workspace => String(workspace.id)))
       let committedWorkspaceOrder = committedWorkspaces.map(workspace => workspace.id)

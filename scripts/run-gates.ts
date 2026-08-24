@@ -555,6 +555,7 @@ function flagEnabled(envName: string): boolean {
 
 function repositoryGovernanceGates(): Gate[] {
   return [
+    pnpmScript('source-tree-clean', 'verify-source-tree-clean', { label: 'source tree cleanliness' }),
     pnpmScript('constraints', 'constraints'),
     pnpmScript('architecture-governance', 'verify-architecture-governance', { label: 'architecture governance' }),
     pnpmScript('upstream-patches', 'verify-upstream-patches', { label: 'upstream patch inventory' }),

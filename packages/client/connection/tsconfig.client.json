@@ -13,7 +13,9 @@
     "src/client/index.ts",
     "src/client/random-uuid.ts",
     "src/client/rpc.ts",
+    "src/client/socket-inbox.ts",
     "src/client/web-api-client.ts",
+    "src/limits.ts",
     "src/loopback-hostname.ts",
     "src/rpc.ts"
   ],

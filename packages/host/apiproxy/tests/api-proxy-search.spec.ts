@@ -756,20 +756,18 @@ describe('session.search', () => {
     expect(searchSessions.mock.calls[0]?.[0]).not.toHaveProperty('sessionFilters')
   })
 
-  it('propagates cancellation through visible-session collection and stops cold-summary work', async () => {
+  it('returns cancellation during indexed visible-session summaries and stops cold work', async () => {
     const ctx = await baseContext()
     const controller = new AbortController()
     const cold = Array.from({ length: 32 }, (_, index) => header(`cold-${index}`, `/cold-${index}`))
-    const list = vi.fn((signal?: AbortSignal) => {
-      expect(signal).toBe(controller.signal)
-      return Promise.resolve(cold)
-    })
+    const list = vi.fn(() => Promise.reject(new Error('indexed visibility must not enumerate headers')))
+    const listSnapshots = vi.fn(() => Promise.resolve(cold.map(header => ({
+      header, lastPromptAt: null, revision: `test:${header.id}`,
+    }))))
     let locateCalls = 0
     ctx.provide('sessionPersistence', {
       list,
-      listSnapshots: (signal?: AbortSignal) => list(signal).then(headers => headers.map(header => ({
-        header, lastPromptAt: null, revision: `test:${header.id}`,
-      }))),
+      listSnapshots,
       locate: () => {
         locateCalls++
         controller.abort()
@@ -788,7 +786,8 @@ describe('session.search', () => {
       ok: false,
       error: { code: 'cancelled' },
     })
-    expect(list).toHaveBeenCalledOnce()
+    expect(listSnapshots).toHaveBeenCalledOnce()
+    expect(list).not.toHaveBeenCalled()
     expect(locateCalls).toBe(1)
     expect(searchSessions).not.toHaveBeenCalled()
   })

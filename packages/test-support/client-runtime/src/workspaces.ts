@@ -64,10 +64,12 @@ export class TestWorkspaces implements IWorkspaces {
   /**
    * New-session flow (recorded; stubbed behavior runs when installed).
    * @param workspaceId - optional explicit workspace target.
+   * @returns the stubbed result, or true for the inert default.
    */
-  startSession(workspaceId?: WorkspaceId): void {
+  async startSession(workspaceId?: WorkspaceId): Promise<boolean> {
     this.calls.push({ method: 'startSession', args: [workspaceId] })
-    this.stubs.get('startSession')?.(workspaceId)
+    const result = this.stubs.get('startSession')?.(workspaceId)
+    return result === undefined ? true : await (result as boolean | Promise<boolean>)
   }
 
   /**

@@ -11,6 +11,7 @@ import { WebApiClient } from './web-api-client.ts'
 import { createWebConnectionRpc } from './rpc.ts'
 import { isLoopbackHostname } from '../loopback-hostname.ts'
 import type { ClientConnectionRpc } from '../rpc.ts'
+import { DEFAULT_WEBSOCKET_INBOX_CAPACITY } from '../limits.ts'
 
 // ---- Contract re-exports (browser-safe apiproxy channels + core types) ----
 export type {
@@ -52,6 +53,11 @@ export interface HostDescriptionSource {
 /** Required services (none — this is the wire root). */
 export const inject: string[] = []
 
+/** Browser-relevant values from the connection plugin row. */
+interface ClientPluginConfig {
+  websocketInboxCapacity?: number
+}
+
 /**
  * The ctx.connection service API: the API client plus a one-shot
  * controller starter (the runtime plugin supplies sinks when its object layer
@@ -80,12 +86,15 @@ export interface ConnectionHandle {
 /**
  * Client plugin body: pick the api by page mode and provide ctx.connection.
  * @param ctx - client cordis context.
+ * @param config - validated connection plugin values shared with the Host row.
  */
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config?: ClientPluginConfig): void {
   const pageLocation = typeof location === 'undefined' ? undefined : location
   const fixture = pageLocation !== undefined && new URLSearchParams(pageLocation.search).has('fixture')
   const fixtureClient = fixture ? new FixtureApiClient() : undefined
-  const api: IApiClient = fixtureClient ?? new WebApiClient()
+  const api: IApiClient = fixtureClient ?? new WebApiClient(
+    config?.websocketInboxCapacity ?? DEFAULT_WEBSOCKET_INBOX_CAPACITY,
+  )
   const rpc = fixtureClient?.rpc ?? createWebConnectionRpc()
   let started = false
   let description: HostDescription | undefined

@@ -11,6 +11,7 @@ import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
 import { assertTrustedAuthority, isTrustedApiRequest } from './api-request-trust.ts'
 import { HostConnectionService } from './rpc-host.ts'
 import { rejectWebSocketUpgrade, WebSocketDownlinks } from './websocket-downlink.ts'
+import { DEFAULT_WEBSOCKET_INBOX_CAPACITY } from './limits.ts'
 
 export type {
   ConnectionRpcAuthority,
@@ -60,11 +61,14 @@ export interface ConnectionConfig {
   trustedHosts?: string[]
   /** Maximum buffered JSON body for every `/api` request. */
   maxRequestBodyBytes?: number
+  /** Maximum decoded downstream frames retained by each browser WebSocket before reconnect. */
+  websocketInboxCapacity?: number
 }
 
 export const Config: z<ConnectionConfig> = z.object({
   trustedHosts: z.array(String).default([]),
   maxRequestBodyBytes: z.natural().min(1).default(DEFAULT_MAX_REQUEST_BODY_BYTES),
+  websocketInboxCapacity: z.natural().min(1).default(DEFAULT_WEBSOCKET_INBOX_CAPACITY),
 })
 
 /**

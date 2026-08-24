@@ -15,6 +15,7 @@ import type { ConversationSnapshot } from './sessions/conversation.ts'
 import type { UseProjection } from './sessions/projection-store.ts'
 import { ConversationEventRegistry } from './conversation/event-registry.ts'
 import { ConversationViewRegistry } from './conversation/view-registry.ts'
+import { DEFAULT_MAX_RESIDENT_SESSIONS } from '../runtime-config.ts'
 
 export { isAppendSurfaceEvent, isReplacementSurfaceEvent } from '@deepseek-ai/dsh-session/surface'
 
@@ -181,17 +182,29 @@ declare module '@deepseek-ai/cordis' {
 /** Required services: the wire handle and Client Typert registry. */
 export const inject = ['connection', 'typert', 'remote', 'remote.commands']
 
+/** Browser values validated by the runtime plugin's Host entry. */
+interface ClientRuntimeConfig {
+  maxResidentSessions?: number
+}
+
 /** Mounts the browser runtime services and connection stream.
  * @param ctx - Client Cordis context.
+ * @param config - Resolved browser runtime limits.
  */
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config?: ClientRuntimeConfig): void {
   ctx.plugin(SlotRegistry)
   const conversation = {
     events: new ConversationEventRegistry(ctx),
     views: new ConversationViewRegistry(ctx),
   }
   const connection = ctx.get('connection') as ConnectionHandle
-  const sessions = new SessionRuntime(ctx, connection.api, ctx.remote, conversation)
+  const sessions = new SessionRuntime(
+    ctx,
+    connection.api,
+    ctx.remote,
+    conversation,
+    config?.maxResidentSessions ?? DEFAULT_MAX_RESIDENT_SESSIONS,
+  )
   ctx.typert.contexts.registerClient('agent', {
     identity: candidate => sessions.scopeOf(candidate),
   })

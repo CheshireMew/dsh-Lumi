@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
+import {
+  SessionPersistenceNotFoundError,
+  SessionPersistenceRevision,
+} from '@deepseek-ai/dsh-session-persistence'
 import { SubagentError } from '@deepseek-ai/dsh-subagent'
 import { RpcId } from '../src/api/rpc.ts'
 import type { RpcRequest } from '../src/api/rpc.ts'
@@ -69,7 +73,9 @@ function bench(options: {
   const childEvents = [
     { type: 'user/message', seq: 0, time: 1, data: { content: [{ type: 'text', text: 'work' }], source: { kind: 'user' } } },
   ] as unknown as SessionEvent[]
-  const inspect = vi.fn(() => Promise.resolve({ meta: childHeader, events: childEvents }))
+  const inspect = vi.fn(() => options.storedChild === false
+    ? Promise.reject(new SessionPersistenceNotFoundError(CHILD))
+    : Promise.resolve({ meta: childHeader, events: childEvents }))
   const liveBlock = { values: {}, asOfSeq: 3 }
   const coldBlock = { values: {}, asOfSeq: 0 }
   const snapshot = vi.fn(() => {
@@ -87,9 +93,15 @@ function bench(options: {
     get: (id: SessionId) => options.liveChild === true && id === CHILD
       ? { id: CHILD, header: childHeader, events: childEvents }
       : undefined,
+    list: () => [],
   })
   ctx.provide('sessionPersistence', {
     list: () => Promise.resolve(options.storedChild === false ? [] : [childHeader]),
+    listSnapshots: () => Promise.resolve(options.storedChild === false ? [] : [{
+      header: childHeader,
+      lastPromptAt: null,
+      revision: SessionPersistenceRevision('subagent-test:child'),
+    }]),
     inspect,
     locate: () => undefined,
   })

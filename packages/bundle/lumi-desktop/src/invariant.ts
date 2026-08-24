@@ -8,8 +8,8 @@ export const name = 'lumi-desktop-bundle-invariant'
 /** Service required before ownership registration. */
 export const inject = ['invariants']
 /**
- * No runtime invariant: this additive profile bundle is a static composition
- * manifest and owns no data or event relationship after its rows are mounted.
+ * No runtime invariant: the profile's model-discovery callback validates each
+ * response at the request point and owns no persistent cross-service relation.
  */
 const install: InvariantInstaller = () => {}
 /** Register bundle ownership. */

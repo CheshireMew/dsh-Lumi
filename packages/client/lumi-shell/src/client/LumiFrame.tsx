@@ -84,7 +84,7 @@ function usePackAnimation(
 
 /** Custom title bar shown only inside Electron. */
 function DesktopTitleBar({
-  t, name, state, level, progress, mode, onMode,
+  t, name, state, level, progress, mode, sceneAvailable, onMode,
 }: {
   t: LumiFrameProps['t']
   name: string
@@ -92,10 +92,16 @@ function DesktopTitleBar({
   level: number
   progress: number
   mode: 'scene' | 'work'
+  sceneAvailable: boolean
   onMode: (mode: 'scene' | 'work') => void
 }) {
   const desktop = window.dshDesktop
+  const [actionFailed, setActionFailed] = useState(false)
   if (desktop === undefined) return null
+  const run = async (operation: () => Promise<void>): Promise<void> => {
+    setActionFailed(false)
+    try { await operation() } catch { setActionFailed(true) }
+  }
   return (
     <header className={css.titleBar}>
       <div className={css.titleIdentity}>
@@ -103,12 +109,13 @@ function DesktopTitleBar({
         <BondProgress t={t} level={level} progress={progress} />
       </div>
       <div className={css.titleMode}>
-        <button type="button" aria-pressed={mode === 'scene'} data-active={mode === 'scene' || undefined} onClick={() => { onMode('scene') }}>{t('mode.scene')}</button>
+        <button type="button" disabled={!sceneAvailable} title={sceneAvailable ? undefined : t('mode.sceneNarrow')} aria-pressed={mode === 'scene'} data-active={mode === 'scene' || undefined} onClick={() => { onMode('scene') }}>{t('mode.scene')}</button>
         <button type="button" aria-pressed={mode === 'work'} data-active={mode === 'work' || undefined} onClick={() => { onMode('work') }}>{t('mode.work')}</button>
       </div>
       <div className={css.titleActions}>
-        <button type="button" onClick={() => { void desktop.app.openCharacterPacksFolder() }}>{t('title.packs')}</button>
-        <button type="button" onClick={() => { void desktop.app.openLogsFolder() }}>{t('title.logs')}</button>
+        {actionFailed ? <span className={css.titleError} role="alert">{t('title.actionFailed')}</span> : null}
+        <button type="button" onClick={() => { void run(desktop.app.openCharacterPacksFolder) }}>{t('title.packs')}</button>
+        <button type="button" onClick={() => { void run(desktop.app.openLogsFolder) }}>{t('title.logs')}</button>
         {desktop.platform === 'darwin' ? null : <>
           <button type="button" aria-label={t('window.minimize')} onClick={() => { void desktop.window.minimize() }}>—</button>
           <button type="button" aria-label={t('window.maximize')} onClick={() => { void desktop.window.toggleMaximize() }}>□</button>
@@ -246,6 +253,7 @@ export function LumiFrame({
         level={character.bondLevel}
         progress={character.bondLevelProgress}
         mode={mode}
+        sceneAvailable={!narrow}
         onMode={(next) => { setPreference('layoutMode', next) }}
       />
 
@@ -262,7 +270,7 @@ export function LumiFrame({
             <BondProgress t={t} level={character.bondLevel} progress={character.bondLevelProgress} />
           </div>
           <div className={css.modeSwitch}>
-            <button type="button" aria-pressed={mode === 'scene'} data-active={mode === 'scene' || undefined} onClick={() => { setPreference('layoutMode', 'scene') }}>{t('mode.scene')}</button>
+            <button type="button" disabled={narrow} title={narrow ? t('mode.sceneNarrow') : undefined} aria-pressed={mode === 'scene'} data-active={mode === 'scene' || undefined} onClick={() => { setPreference('layoutMode', 'scene') }}>{t('mode.scene')}</button>
             <button type="button" aria-pressed={mode === 'work'} data-active={mode === 'work' || undefined} onClick={() => { setPreference('layoutMode', 'work') }}>{t('mode.work')}</button>
           </div>
         </div>

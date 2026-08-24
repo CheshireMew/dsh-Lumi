@@ -24,6 +24,8 @@ export interface WorkspaceListState {
   baselinesReady: boolean
   /** Most recently active Workspace without changing display order. */
   recentWorkspaceId: WorkspaceId | undefined
+  /** Latest Workspace connection failure, retained until a new attempt or successful navigation. */
+  navigationFailure: { workspaceId: WorkspaceId; message: string } | null
 }
 
 /** The workspaces-service face injected as `ctx.workspaces`. */
@@ -38,12 +40,13 @@ export interface IWorkspaces {
   connectWorkspace(workspaceId: WorkspaceId): Promise<SessionId>
   /**
    * The New Session flow: connect the explicit, current-Session, or recent
-   * Workspace and open the resulting session; failures surface on the session
-   * list state.
+   * Workspace and open the resulting session; failures surface on the
+   * workspace list state without rejecting fire-and-forget shell consumers.
    * @param workspaceId - explicit target; omitted inherits the current
    * Session's Workspace before falling back to the recency projection.
+   * @returns true after navigation or a deliberate clear; false after a connection failure.
    */
-  startSession(workspaceId?: WorkspaceId): void
+  startSession(workspaceId?: WorkspaceId): Promise<boolean>
   /**
    * Register an existing path as a Workspace.
    * @param input - the Host create payload.

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CHARACTER_STATES } from '../src/pack-contract.ts'
-import { LumiPackCatalog } from '../src/packs.ts'
+import { inspectLumiPackDirectory, LumiPackCatalog } from '../src/packs.ts'
 
 const animation = { keyframes: [{ at: 0 }, { at: 1, translateY: -3 }], loop: 'alternate', minDurationMs: 1200 }
 const richAnimation = {
@@ -120,6 +120,17 @@ describe('LumiPackCatalog', () => {
     watchControl.throws = false
     watchControl.failure = undefined
     watchControl.watchers = []
+  })
+
+  it('preflights desktop imports with the live catalog parser and stable errors', () => {
+    const { root } = packRoots('dsh-lumi-import-')
+    mkdirSync(root, { recursive: true })
+    expect(inspectLumiPackDirectory(root)).toMatchObject({ ok: false, code: 'missing-manifest' })
+    writeFileSync(join(root, 'manifest.json'), '{')
+    expect(inspectLumiPackDirectory(root)).toMatchObject({ ok: false, code: 'invalid-json' })
+    const valid = writePack(root, 'luna', manifest('luna'))
+    expect(inspectLumiPackDirectory(valid)).toMatchObject({ ok: true, manifest: { id: 'luna' } })
+    expect(inspectLumiPackDirectory(valid, 'staging-name')).toMatchObject({ ok: false, code: 'id-mismatch' })
   })
 
   it('publishes complete v1 packs and keeps an unlicensed pack local-only', () => {

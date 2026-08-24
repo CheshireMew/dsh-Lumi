@@ -299,6 +299,47 @@
   padding-left: 0;
 }
 
+.actionNotice {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 8px 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.actionNotice[data-state='error'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 28%, var(--dsw-alias-border-l2));
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 7%, var(--dsw-alias-bg-layer-2));
+}
+
+.actionCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.actionNotice[data-state='error'] strong {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.actionDetail {
+  overflow-wrap: anywhere;
+}
+
+.actionButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
 /* Relative for the bottom fade overlay. */
 .treeBody {
   flex: 1;
@@ -349,6 +390,21 @@
      above the gradient instead of under it. */
   padding-bottom: 16px;
   scrollbar-gutter: stable;
+}
+
+/* One fixed-height canvas owns the logical tree extent; only its visible
+   children are materialized by the shared scroll virtualizer. */
+.virtualCanvas {
+  position: relative;
+  width: 100%;
+}
+
+.virtualItem {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
 }
 
 .flatList > * + *,

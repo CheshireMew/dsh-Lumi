@@ -85,5 +85,6 @@ export function workspaceListState(): WorkspaceListState {
     error: null,
     baselinesReady: true,
     recentWorkspaceId: undefined,
+    navigationFailure: null,
   }
 }

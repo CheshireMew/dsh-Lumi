@@ -82,9 +82,9 @@ describe('ui-workspace apply', () => {
 
     const browser = (b.slots.entries('sidebar.workspaces')[0]!.inject as () => WorkspaceBrowserInjected)()
     // Both arms delegate to the runtime's shared New Session action.
-    browser.startSession('ws' as never)
+    await browser.startSession('ws' as never)
     expect(b.startSession).toHaveBeenCalledWith('ws')
-    browser.startSession()
+    await browser.startSession()
     expect(b.startSession).toHaveBeenLastCalledWith(undefined)
     browser.open('session' as never)
     expect(b.open).toHaveBeenCalledWith('session')
@@ -98,11 +98,13 @@ describe('ui-workspace apply', () => {
     await browser.renameSession('session' as never, 'renamed session')
     expect(b.binding).toHaveBeenCalledWith('session')
     expect(b.renameSession).toHaveBeenCalledWith('renamed session')
-    browser.forkSession('session' as never)
-    await vi.waitFor(() => {
-      expect(b.open).toHaveBeenCalledWith('forked')
-    })
+    await browser.forkSession('session' as never)
+    expect(b.open).toHaveBeenCalledWith('forked')
     expect(b.fork).toHaveBeenCalledWith({ sessionId: 'session', increaseTitle: true })
+    const openCallsBeforeRejectedFork = b.open.mock.calls.length
+    b.fork.mockRejectedValueOnce(new Error('fork rejected'))
+    await expect(browser.forkSession('session' as never)).rejects.toThrow('fork rejected')
+    expect(b.open).toHaveBeenCalledTimes(openCallsBeforeRejectedFork)
     await browser.renameWorkspace('ws' as never, 'renamed')
     expect(b.rename).toHaveBeenCalledWith('ws', 'renamed')
     await browser.insertSessionBefore('ws' as never, 's1' as never, 's2' as never)

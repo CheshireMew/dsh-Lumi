@@ -39,6 +39,32 @@ function stubAgent(ctx: Context, session: Session): Agent {
 }
 
 describe('API Remote Agent resolver races', () => {
+  it('resolves an exact durable id without listing the session catalog', async () => {
+    const ctx = await createContext()
+    const sessionId = sid('direct-inspect')
+    const meta = header(sessionId)
+    let published: Session | undefined
+    const list = vi.fn(() => Promise.reject(new Error('catalog scan must not run')))
+    ctx.provide('sessionPersistence', {
+      list,
+      inspect: () => {
+        published = ctx.sessions.create(sessionId, { meta: { cwd: '/proj' } })
+        return Promise.resolve({ meta, events: [] })
+      },
+      locate: () => undefined,
+    } as never)
+    vi.spyOn(ctx.agents, 'resume').mockImplementation(async () => {
+      if (published === undefined) throw new Error('Session was not published')
+      return { agent: stubAgent(ctx, published), dispose: () => Promise.resolve() }
+    })
+
+    const result = await createApiRemoteAgentResolver(ctx, {})(sessionId)
+
+    expect(result).toMatchObject({ agent: { id: sessionId } })
+    expect(list).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+
   it('maps an inspected session without a cwd to session-not-found', async () => {
     const ctx = await createContext()
     const sessionId = sid('missing-after-inspect')

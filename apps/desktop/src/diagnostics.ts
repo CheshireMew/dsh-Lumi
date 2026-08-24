@@ -1,8 +1,10 @@
 import {
-  appendFileSync, existsSync, readdirSync, renameSync, rmSync, statSync,
+  readdirSync, rmSync, statSync,
 } from 'node:fs'
+import { open, rename, rm, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Writable } from 'node:stream'
+import { finished } from 'node:stream/promises'
 import { dailyLogPath } from './paths.ts'
 
 /** Bounded local-diagnostic retention inputs owned by desktop configuration. */
@@ -31,30 +33,105 @@ export function pruneDiagnosticFiles(directory: string, maxFiles: number, maxAge
   return removed
 }
 
-/** Keep at most one full predecessor and one bounded current daily log. */
-export function appendBoundedLog(path: string, payload: string | Uint8Array, maxBytes: number): void {
-  const bytes = Buffer.from(payload)
-  const retained = bytes.byteLength > maxBytes ? bytes.subarray(bytes.byteLength - maxBytes) : bytes
-  if (existsSync(path) && statSync(path).size + retained.byteLength > maxBytes) {
-    const previous = `${path}.previous`
-    rmSync(previous, { force: true })
-    renameSync(path, previous)
+/** Writable that keeps one bounded current file and one full predecessor. */
+class RotatingLogStream extends Writable {
+  private handle: FileHandle | undefined
+  private size = 0
+
+  /** @param path - Current log file. @param maxBytes - Byte ceiling before rotation. */
+  constructor(private readonly path: string, private readonly maxBytes: number) {
+    super()
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+      throw new RangeError('log byte limit must be a positive safe integer')
+    }
   }
-  appendFileSync(path, retained)
+
+  override _construct(callback: (error?: Error | null) => void): void {
+    void this.openCurrent().then(() => { callback() }, (error: unknown) => { callback(asError(error)) })
+  }
+
+  override _write(
+    chunk: Buffer | string,
+    encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    void this.append(chunk, encoding).then(() => { callback() }, (error: unknown) => { callback(asError(error)) })
+  }
+
+  override _final(callback: (error?: Error | null) => void): void {
+    void this.closeCurrent().then(() => { callback() }, (error: unknown) => { callback(asError(error)) })
+  }
+
+  override _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+    void this.closeCurrent().then(() => { callback(error) }, (closeError: unknown) => { callback(asError(closeError)) })
+  }
+
+  /** Open the append handle and seed its exact byte position. */
+  private async openCurrent(): Promise<void> {
+    this.handle = await open(this.path, 'a')
+    this.size = (await this.handle.stat()).size
+  }
+
+  /** Append one retained chunk, rotating only after the previous handle has closed. */
+  private async append(chunk: Buffer | string, encoding: BufferEncoding): Promise<void> {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding)
+    const retained = bytes.byteLength > this.maxBytes
+      ? bytes.subarray(bytes.byteLength - this.maxBytes)
+      : bytes
+    if (this.size + retained.byteLength > this.maxBytes) await this.rotate()
+    await this.requireHandle().writeFile(retained)
+    this.size += retained.byteLength
+  }
+
+  /** Replace the predecessor only after Windows releases the current file handle. */
+  private async rotate(): Promise<void> {
+    await this.closeCurrent()
+    const previous = `${this.path}.previous`
+    await rm(previous, { force: true })
+    try {
+      await rename(this.path, previous)
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    await this.openCurrent()
+  }
+
+  /** Close the owned file handle exactly once. */
+  private async closeCurrent(): Promise<void> {
+    const handle = this.handle
+    this.handle = undefined
+    if (handle !== undefined) await handle.close()
+  }
+
+  private requireHandle(): FileHandle {
+    if (this.handle === undefined) throw new Error('desktop log stream is closed')
+    return this.handle
+  }
 }
 
-/** Writable sink that bounds Harness stdout/stderr without back-pressuring on a file handle. */
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error))
+}
+
+/** Append one payload and close after all asynchronous filesystem work settles. */
+export async function appendBoundedLog(
+  path: string,
+  payload: string | Uint8Array,
+  maxBytes: number,
+): Promise<void> {
+  const stream = new RotatingLogStream(path, maxBytes)
+  stream.end(payload)
+  await finished(stream)
+}
+
+/** Backpressure-aware sink that bounds Harness stdout/stderr without blocking Electron's main thread. */
 export function createDesktopLogStream(logs: string, maxBytes: number): Writable {
-  return new Writable({
-    write(chunk: Uint8Array, _encoding, callback) {
-      try {
-        appendBoundedLog(dailyLogPath(logs, 'harness'), chunk, maxBytes)
-        callback()
-      } catch (error) {
-        callback(error instanceof Error ? error : new Error(String(error)))
-      }
-    },
-  })
+  return new RotatingLogStream(dailyLogPath(logs, 'harness'), maxBytes)
+}
+
+/** Backpressure-aware sink for the Electron main-process diagnostic log. */
+export function createMainLogStream(logs: string, maxBytes: number): Writable {
+  return new RotatingLogStream(dailyLogPath(logs, 'main'), maxBytes)
 }
 
 /** Apply bounded retention to local text logs and Crashpad minidumps. */

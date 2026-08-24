@@ -25,6 +25,22 @@ function summary(sessionId: SessionId, over: SummaryOver = {}) {
 }
 
 describe('instances', () => {
+  it('drops an evicted instance and rebuilds its stream-only pending baseline', () => {
+    const manager = new SessionManager(new FakeApiClient(), fakeRemote())
+    manager.handleMuxEnvelope({
+      rpcId: 'evicted-question' as never,
+      payload: { type: 'question/requested', sessionId: S1, questions: [] },
+    })
+    const first = manager.get(S1)
+    expect(first.getSnapshot().pending).toHaveLength(1)
+
+    manager.drop(S1)
+    const rebuilt = manager.get(S1)
+
+    expect(rebuilt).not.toBe(first)
+    expect(rebuilt.getSnapshot().pending).toHaveLength(1)
+  })
+
   it('lazily builds one resident instance per id and syncs the running bit from the list', async () => {
     const api = new FakeApiClient()
     api.onList = () => Promise.resolve(ok({ items: [summary(S1, { running: true })] as never[] }))

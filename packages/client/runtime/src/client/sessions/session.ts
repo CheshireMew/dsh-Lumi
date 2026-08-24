@@ -1,4 +1,4 @@
-// Sessions remain resident after creation so they continue consuming mux frames off-screen.
+// Session instances are materialized on demand and may be rebuilt from Host history after eviction.
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { AttachmentIdType, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -586,8 +586,28 @@ export class Session implements SessionFace {
     this.notifier.markDirty()
   }
 
-  /** No-op because session instances remain resident. */
-  dispose(): void {}
+  /** Release the retained history window and invalidate every in-flight history read. */
+  dispose(): void {
+    this.openGeneration += 1
+    this.openPromise = null
+    this.events = []
+    this.views = []
+    this.liveBuffer = []
+    this.baseSeq = 0
+    this.hasMore = false
+    this.openState = 'cold'
+    this.openError = null
+    this.stitching = false
+    this.subscribedLastSeq = null
+    for (const wait of this.pending.values()) wait.markSettled()
+    this.pending.clear()
+    this.pendingRev += 1
+    this.pendingCache = null
+    this.queueMirror.reset()
+    this.conversation.replaceWindow([], false)
+    this.actx = undefined
+    this.notifier.markDirty()
+  }
 
   /** Rebuild the current window after a low-frequency Definition or view registration change. */
   rebuildConversationRegistry(): void {

@@ -112,25 +112,28 @@ describe('session.list pagination', () => {
     }
   })
 
-  it('reports an evicted snapshot cursor as stale rather than malformed', async () => {
+  it('reports an expired indexed snapshot cursor as stale rather than malformed', async () => {
     const ctx = await baseContext()
+    let now = 100
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
     try {
       for (const item of [header('three', 3), header('two', 2), header('one', 1)]) {
         ctx.sessions.create(item.id, { meta: item })
       }
-      const api = createApiProxy(ctx, { ...defaults, sessionListMaxSnapshots: 1 })
+      const api = createApiProxy(ctx, { ...defaults, sessionListSnapshotTtlMs: 1 })
       const first = await api.sessions.list(request({ limit: 1 }))
       if (!first.result.ok) throw new Error('unreachable')
       const evictedCursor = first.result.value.nextCursor
       if (evictedCursor === undefined) throw new Error('unreachable')
 
-      await api.sessions.list(request({ limit: 1 }))
+      now = 102
       const stale = await api.sessions.list(request({ limit: 1, cursor: evictedCursor }))
       expect(stale.result).toMatchObject({
         ok: false,
         error: { code: 'session-list-cursor-stale' },
       })
     } finally {
+      vi.restoreAllMocks()
       await ctx.fiber.dispose()
     }
   })

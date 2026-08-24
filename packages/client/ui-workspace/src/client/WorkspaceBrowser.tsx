@@ -21,16 +21,17 @@ import type { SessionNode } from './tree.ts'
 import { UNGROUPED_KEY } from './tree.ts'
 import { FLAT_SESSION_ORDER_KEY } from './stores.ts'
 import { WorkspacePickFlow } from './WorkspacePicker.tsx'
+import { SearchResults, type RemoteSearchState } from './workspace-browser-search.tsx'
 import {
   EXPAND_SLIDE_MS,
   FlatList,
   SEARCH_DEBOUNCE_MS,
   SEARCH_QUERY_MAX_CODE_UNITS,
   sanitizeSearchQuery,
-  SearchResults,
   SessionTree,
   ViewOptionsMenu,
-  type RemoteSearchState,
+  type RunWorkspaceAction,
+  type WorkspaceActionKind,
 } from './workspace-browser-sections.tsx'
 import css from './WorkspaceBrowser.module.css'
 
@@ -67,6 +68,7 @@ export function WorkspaceBrowser({
   const workspaces = useWorkspaces(state => state.items)
   const workspacePhase = useWorkspaces(state => state.phase)
   const archivedSessionIds = useWorkspaces(state => state.archivedSessionIds)
+  const navigationFailure = useWorkspaces(state => state.navigationFailure)
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
   const directoryFlowAvailable = useDirectoryFlow(occupied => occupied)
@@ -101,6 +103,69 @@ export function WorkspaceBrowser({
   const [wsPickerOpen, setWsPickerOpen] = useState(false)
   const wsPlusRef = useRef<HTMLButtonElement>(null)
   const composingRef = useRef(false)
+  type VisibleActionKind = WorkspaceActionKind | 'startSession'
+  const actionEpochs = useRef<Record<WorkspaceActionKind, number>>({
+    forkSession: 0,
+    archiveSession: 0,
+    unarchiveSession: 0,
+    reorderWorkspace: 0,
+    reorderSession: 0,
+  })
+  const nextActionId = useRef(0)
+  const [pendingActions, setPendingActions] = useState<readonly {
+    id: number
+    kind: WorkspaceActionKind
+  }[]>([])
+  const [navigationRetrying, setNavigationRetrying] = useState(false)
+  const [actionFailures, setActionFailures] = useState<readonly {
+    id: number
+    kind: WorkspaceActionKind
+    detail: string
+    retry: () => void
+  }[]>([])
+  const pendingAction = pendingActions.at(-1)?.kind ?? null
+  const actionFailure = actionFailures[0] ?? null
+
+  const runAction: RunWorkspaceAction = async (kind, operation, afterSuccess) => {
+    const epoch = ++actionEpochs.current[kind]
+    const id = ++nextActionId.current
+    setPendingActions(actions => [...actions, { id, kind }])
+    try {
+      await operation()
+      if (epoch === actionEpochs.current[kind]) afterSuccess?.()
+      return true
+    } catch (reason) {
+      setActionFailures(failures => [...failures, {
+        id,
+        kind,
+        detail: reason instanceof Error ? reason.message : String(reason),
+        retry: () => {
+          setActionFailures(failures => failures.filter(failure => failure.id !== id))
+          void runAction(kind, operation, afterSuccess)
+        },
+      }])
+      return false
+    } finally {
+      setPendingActions(actions => actions.filter(action => action.id !== id))
+    }
+  }
+
+  const actionLabel = (kind: VisibleActionKind): string => {
+    switch (kind) {
+      case 'startSession': return t('action.startSession')
+      case 'forkSession': return t('action.forkSession')
+      case 'archiveSession': return t('action.archiveSession')
+      case 'unarchiveSession': return t('action.unarchiveSession')
+      case 'reorderWorkspace': return t('action.reorderWorkspace')
+      case 'reorderSession': return t('action.reorderSession')
+    }
+  }
+
+  const retryNavigation = (): void => {
+    if (navigationFailure === null || navigationRetrying) return
+    setNavigationRetrying(true)
+    void startSession(navigationFailure.workspaceId).finally(() => { setNavigationRetrying(false) })
+  }
 
   // Rail search = expand + land in the search box: the flag arms before the
   // expand request; once the shell flips wide the input mounts and takes focus.
@@ -232,17 +297,12 @@ export function WorkspaceBrowser({
 
   // Archive is dialog-free: not destructive (the log and the accounting slot
   // remain), so the menu action commits directly; the row disappears when the
-  // archive-set echo lands. Failures are non-fatal console diagnostics, the
-  // same posture as reorder rejections.
+  // archive-set echo lands. The browser retains progress, failure, and retry.
   const onSessionArchive = (sessionId: SessionNode['id']) => {
-    archiveSession(sessionId).catch((reason: unknown) => {
-      console.warn('session archive rejected:', reason)
-    })
+    void runAction('archiveSession', () => archiveSession(sessionId))
   }
   const onSessionUnarchive = (sessionId: SessionNode['id']) => {
-    unarchiveSession(sessionId).catch((reason: unknown) => {
-      console.warn('session unarchive rejected:', reason)
-    })
+    void runAction('unarchiveSession', () => unarchiveSession(sessionId))
   }
 
   const [sessionDeleteTarget, setSessionDeleteTarget] = useState<{
@@ -415,7 +475,7 @@ export function WorkspaceBrowser({
           side="right"
           onPick={(workspaceId) => {
             setWsPickerOpen(false)
-            startSession(workspaceId)
+            void startSession(workspaceId)
           }}
           onClose={() => { setWsPickerOpen(false) }}
         />
@@ -438,6 +498,44 @@ export function WorkspaceBrowser({
           </button>
         </Tooltip>
       </div>}
+
+      {wide && (pendingAction !== null || navigationRetrying) && (
+        <div className={css.actionNotice} data-state="pending" role="status">
+          {t('action.pending', {
+            action: actionLabel(pendingAction ?? 'startSession'),
+          })}
+        </div>
+      )}
+      {wide && pendingAction === null && !navigationRetrying && (actionFailure !== null || navigationFailure !== null) && (
+        <div className={css.actionNotice} data-state="error" role="alert">
+          <div className={css.actionCopy}>
+            <strong>{t('action.failed', {
+              action: actionLabel(actionFailure?.kind ?? 'startSession'),
+            })}</strong>
+            <span className={css.actionDetail}>{actionFailure?.detail ?? navigationFailure?.message}</span>
+          </div>
+          <div className={css.actionButtons}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={actionFailure?.retry ?? retryNavigation}
+            >
+              {t('action.retry')}
+            </Button>
+            {actionFailure !== null && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setActionFailures(failures => failures.filter(failure => failure.id !== actionFailure.id))
+                }}
+              >
+                {t('action.dismiss')}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Always-mounted seat keeps the region's flex slot while the list
           itself is wide-only. */}
@@ -467,6 +565,7 @@ export function WorkspaceBrowser({
                 sessionUpdatedAtByAccount={sessionUpdatedAtByAccount}
                 syncSessionOrderAccount={actions.syncSessionOrderAccount}
                 setSessionOrder={actions.setSessionOrder}
+                runAction={runAction}
                 t={t}
               />
             )
@@ -490,6 +589,7 @@ export function WorkspaceBrowser({
                 open={open}
                 insertWorkspaceBefore={insertWorkspaceBefore}
                 insertSessionBefore={insertSessionBefore}
+                runAction={runAction}
                 orderBy={orderBy}
                 t={t}
                 onRenameRequest={(workspaceId, currentTitle) => {

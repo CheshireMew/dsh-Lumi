@@ -241,7 +241,10 @@ export class SessionManager {
    * @param sessionId - the session to drop.
    */
   drop(sessionId: SessionId): void {
+    const session = this.sessions.get(sessionId)
+    if (session === undefined) return
     this.sessions.delete(sessionId)
+    session.dispose()
   }
 
   /**
@@ -262,7 +265,6 @@ export class SessionManager {
       // while the session was uninstantiated).
       const buffered = this.pendingBuffers.get(sessionId)
       if (buffered !== undefined) {
-        this.pendingBuffers.delete(sessionId)
         for (const envelope of buffered) session.handleMuxEnvelope(envelope.rpcId, envelope.payload)
       }
       // Sync the running and blank bits from the list snapshot into the new
@@ -788,43 +790,38 @@ export class SessionManager {
     } else if (frame.type === 'question/resolved') {
       this.resolvePending(frame.sessionId, `q:${frame.questionRpcId}`)
     }
-    const session = this.sessions.get(frame.sessionId)
-    if (session === undefined) {
-      // Answerable requests never hit history: retain each live identity until
-      // instantiation, compacting replay duplicates and resolutions so list
-      // status cannot outlive the PendingWait the user would need to answer.
-      // Queue is a latest-value snapshot; everything else drops because open
-      // backfills it from history.
-      switch (frame.type) {
-        case 'approval/requested':
-        case 'question/requested':
-        case 'session/queue': {
-          const buffer = this.pendingBuffers.get(frame.sessionId) ?? []
-          const key = frame.type === 'approval/requested'
-            ? `a:${frame.approvalId}`
-            : frame.type === 'question/requested' ? `q:${envelope.rpcId}` : 'queue'
-          const prior = buffer.findIndex(item => bufferedRequestKey(item) === key)
-          if (prior === -1) buffer.push(envelope)
-          else buffer[prior] = envelope
-          this.pendingBuffers.set(frame.sessionId, buffer)
-          return
-        }
-        case 'approval/resolved':
-        case 'question/resolved': {
-          const buffer = this.pendingBuffers.get(frame.sessionId)
-          if (buffer === undefined) return
-          const key = frame.type === 'approval/resolved'
-            ? `a:${frame.approvalId}`
-            : `q:${frame.questionRpcId}`
-          const prior = buffer.findIndex(item => bufferedRequestKey(item) === key)
-          if (prior !== -1) buffer.splice(prior, 1)
-          if (buffer.length === 0) this.pendingBuffers.delete(frame.sessionId)
-          return
-        }
-        default:
-          return
+    // Stream-only baselines outlive an evictable Session instance. Requests
+    // remain until their resolved frame; queue is a latest-value snapshot.
+    switch (frame.type) {
+      case 'approval/requested':
+      case 'question/requested':
+      case 'session/queue': {
+        const buffer = this.pendingBuffers.get(frame.sessionId) ?? []
+        const key = frame.type === 'approval/requested'
+          ? `a:${frame.approvalId}`
+          : frame.type === 'question/requested' ? `q:${envelope.rpcId}` : 'queue'
+        const prior = buffer.findIndex(item => bufferedRequestKey(item) === key)
+        if (prior === -1) buffer.push(envelope)
+        else buffer[prior] = envelope
+        this.pendingBuffers.set(frame.sessionId, buffer)
+        break
       }
+      case 'approval/resolved':
+      case 'question/resolved': {
+        const buffer = this.pendingBuffers.get(frame.sessionId)
+        if (buffer === undefined) break
+        const key = frame.type === 'approval/resolved'
+          ? `a:${frame.approvalId}`
+          : `q:${frame.questionRpcId}`
+        const prior = buffer.findIndex(item => bufferedRequestKey(item) === key)
+        if (prior !== -1) buffer.splice(prior, 1)
+        if (buffer.length === 0) this.pendingBuffers.delete(frame.sessionId)
+        break
+      }
+      default: break
     }
+    const session = this.sessions.get(frame.sessionId)
+    if (session === undefined) return
     session.handleMuxEnvelope(envelope.rpcId, frame)
   }
 

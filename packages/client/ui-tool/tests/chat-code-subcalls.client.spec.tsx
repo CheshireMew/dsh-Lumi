@@ -150,7 +150,7 @@ async function bench(snapshot: ConversationSnapshot) {
   const workspaces = {
     list: createSnapshotStore<WorkspaceListState>({
       items: [], archivedSessionIds: [], state: 'idle', phase: 'ready', error: null,
-      baselinesReady: true, recentWorkspaceId: undefined,
+      baselinesReady: true, recentWorkspaceId: undefined, navigationFailure: null,
     }),
     startSession: vi.fn(),
     sendSession: vi.fn(),

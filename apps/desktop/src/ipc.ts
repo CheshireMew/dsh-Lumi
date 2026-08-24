@@ -7,6 +7,7 @@ export const DESKTOP_INVOKE_CHANNELS = Object.freeze({
   restartHarness: 'desktop:app:restart-harness',
   openLogs: 'desktop:app:open-logs',
   openPacks: 'desktop:app:open-packs',
+  importPack: 'desktop:app:import-character-pack',
 })
 
 /** Main-to-renderer notifications exposed by the desktop bridge. */

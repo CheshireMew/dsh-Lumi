@@ -3,7 +3,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentOptions, AgentSetup } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-session-persistence'
+import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import { TypertLookupFailure } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-typert-registry'
 
@@ -99,11 +99,15 @@ export async function inspectApiRemoteSession(
   if (persistence === undefined) {
     throw new Error('session persistence is not configured (load a dsh-session-persistence backend)')
   }
-  const meta = (await persistence.list()).find(candidate => candidate.id === sessionId)
-  if (meta === undefined || meta.cwd === undefined) {
-    throw new ApiRemoteSessionNotFound(`session "${sessionId}" not found`)
+  let inspected: Awaited<ReturnType<typeof persistence.inspect>>
+  try {
+    inspected = await persistence.inspect(sessionId)
+  } catch (error: unknown) {
+    if (error instanceof SessionPersistenceNotFoundError) {
+      throw new ApiRemoteSessionNotFound(`session "${sessionId}" not found`)
+    }
+    throw error
   }
-  const inspected = await persistence.inspect(sessionId)
   if (inspected.meta.cwd === undefined) {
     throw new ApiRemoteSessionNotFound(`session "${sessionId}" not found`)
   }

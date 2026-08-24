@@ -7,10 +7,13 @@
  * gate semantics. Stores are the kernel-own signals production boot uses
  * (shell self-sufficiency: the loading page depends on no plugin package).
  */
-import { afterEach, describe, expect, it } from 'vitest'
-import { act, cleanup, render } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render } from '@testing-library/react'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  delete (window as Window & { dshDesktop?: unknown }).dshDesktop
+})
 import { AppRoot } from '@deepseek-ai/dsh-client-web/src/AppRoot.tsx'
 import { createLoaderStatusStore, createSignal } from '@deepseek-ai/dsh-client-web/src/loader-status.ts'
 
@@ -54,7 +57,7 @@ describe('AppRoot', () => {
       status.set('ok', 'active')
     })
     expect(getByText('Failed to load plugins')).toBeTruthy()
-    expect(getByText('@deepseek-ai/dsh-client-ui-layout')).toBeTruthy()
+    expect(getByText(/@deepseek-ai\/dsh-client-ui-layout/)).toBeTruthy()
     expect(queryByTestId('real-ui')).toBeNull()
   })
 
@@ -64,6 +67,29 @@ describe('AppRoot', () => {
     expect(getByText('Failed to load plugins')).toBeTruthy()
     expect(getByText(/waiting for service/)).toBeTruthy()
     expect(queryByTestId('real-ui')).toBeNull()
+  })
+
+  it('offers desktop restart, logs, and diagnostic copy recovery actions', async () => {
+    const restartHarness = vi.fn(() => Promise.resolve())
+    const openLogsFolder = vi.fn(() => Promise.resolve())
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    Object.defineProperty(window, 'dshDesktop', {
+      configurable: true,
+      value: { app: { restartHarness, openLogsFolder } },
+    })
+    const { error, getByRole } = mount()
+    act(() => { error.set('web boot: plugin activation failed') })
+    fireEvent.click(getByRole('button', { name: 'Restart service' }))
+    await act(async () => { await Promise.resolve() })
+    expect(restartHarness).toHaveBeenCalledTimes(1)
+    fireEvent.click(getByRole('button', { name: 'Open logs' }))
+    await act(async () => { await Promise.resolve() })
+    expect(openLogsFolder).toHaveBeenCalledTimes(1)
+    fireEvent.click(getByRole('button', { name: 'Copy diagnostics' }))
+    await act(async () => { await Promise.resolve() })
+    expect(writeText).toHaveBeenCalledWith('web boot: plugin activation failed')
+    expect(getByRole('button', { name: 'Diagnostics copied' })).toBeTruthy()
   })
 
   it('flipping settled switches to the real UI in one pass', () => {

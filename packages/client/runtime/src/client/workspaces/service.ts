@@ -39,6 +39,10 @@ export class WorkspaceRuntime implements IWorkspaces {
   private readonly connecting = new Map<WorkspaceId, Promise<SessionId>>()
   /** Guards the runtime-owned one-shot initial-selection subscription. */
   private initialSelectionStarted = false
+  /** Latest failed navigation exposed independently from baseline loading. */
+  private navigationFailure: WorkspaceListState['navigationFailure'] = null
+  /** Suppresses late results from an older navigation attempt. */
+  private navigationRevision = 0
 
   /**
    * @param ctx - client root context.
@@ -49,7 +53,7 @@ export class WorkspaceRuntime implements IWorkspaces {
     this.manager = new WorkspaceManager(api)
     this.list = createSnapshotStore<WorkspaceListState>({
       items: [], archivedSessionIds: [], state: 'idle', phase: 'pending', error: null,
-      baselinesReady: false, recentWorkspaceId: undefined,
+      baselinesReady: false, recentWorkspaceId: undefined, navigationFailure: null,
     })
     this.manager.subscribe(() => { this.project() })
     this.sessions.list.subscribe(() => { this.project() })
@@ -69,32 +73,50 @@ export class WorkspaceRuntime implements IWorkspaces {
    * @returns the reused or newly created session id.
    */
   async connectWorkspace(workspaceId: WorkspaceId): Promise<SessionId> {
-    const workspace = this.list.getSnapshot().items.find(item => item.workspaceId === workspaceId)
-    if (workspace === undefined) throw new Error(`workspaces.connectWorkspace: unknown workspace ${workspaceId}`)
-    // Coalesce concurrent connects: a create's summary lands without cwd
-    // until the host frame arrives, so a second call inside that window
-    // would miss the reuse scan and mint another hidden blank session.
-    const inflight = this.connecting.get(workspaceId)
-    if (inflight !== undefined) return inflight
-    // Reuse requires workspace membership (id in sessionIds AND same
-    // canonical cwd — the host's own membership rule), never cwd alone:
-    // a cwd match can belong to no account (sessions the CLI/TUI birthed at
-    // the host cwd, or a deleted/recreated registration) and reusing it
-    // would open a session no grouping surface shows under this workspace.
-    // An archived blank is never reused either: reuse would open a session
-    // no grouping surface can show, so New Session mints a fresh one instead.
-    const archived = this.list.getSnapshot().archivedSessionIds
-    const sessions = this.sessions.list.getSnapshot()
-    for (const id of sessions.ids) {
-      const summary = sessions.byId[id]
-      if (summary !== undefined && summary.blank && summary.cwd === workspace.path
-        && workspace.sessionIds.includes(summary.id)
-        && !archived.includes(summary.id)) return summary.id
+    const revision = ++this.navigationRevision
+    this.replaceNavigationFailure(null)
+    try {
+      const workspace = this.list.getSnapshot().items.find(item => item.workspaceId === workspaceId)
+      if (workspace === undefined) throw new Error(`workspaces.connectWorkspace: unknown workspace ${workspaceId}`)
+      // Coalesce concurrent connects: a create's summary lands without cwd
+      // until the host frame arrives, so a second call inside that window
+      // would miss the reuse scan and mint another hidden blank session.
+      const inflight = this.connecting.get(workspaceId)
+      if (inflight !== undefined) {
+        const sessionId = await inflight
+        if (revision === this.navigationRevision) this.replaceNavigationFailure(null)
+        return sessionId
+      }
+      // Reuse requires workspace membership (id in sessionIds AND same
+      // canonical cwd — the host's own membership rule), never cwd alone:
+      // a cwd match can belong to no account (sessions the CLI/TUI birthed at
+      // the host cwd, or a deleted/recreated registration) and reusing it
+      // would open a session no grouping surface shows under this workspace.
+      // An archived blank is never reused either: reuse would open a session
+      // no grouping surface can show, so New Session mints a fresh one instead.
+      const archived = this.list.getSnapshot().archivedSessionIds
+      const sessions = this.sessions.list.getSnapshot()
+      for (const id of sessions.ids) {
+        const summary = sessions.byId[id]
+        if (summary !== undefined && summary.blank && summary.cwd === workspace.path
+          && workspace.sessionIds.includes(summary.id)
+          && !archived.includes(summary.id)) {
+          if (revision === this.navigationRevision) this.replaceNavigationFailure(null)
+          return summary.id
+        }
+      }
+      const attempt = this.sessions.create({ workspaceId })
+        .finally(() => { this.connecting.delete(workspaceId) })
+      this.connecting.set(workspaceId, attempt)
+      const sessionId = await attempt
+      if (revision === this.navigationRevision) this.replaceNavigationFailure(null)
+      return sessionId
+    } catch (reason) {
+      if (revision === this.navigationRevision) {
+        this.replaceNavigationFailure({ workspaceId, message: errorMessage(reason) })
+      }
+      throw reason
     }
-    const attempt = this.sessions.create({ workspaceId })
-      .finally(() => { this.connecting.delete(workspaceId) })
-    this.connecting.set(workspaceId, attempt)
-    return attempt
   }
 
   /**
@@ -102,7 +124,7 @@ export class WorkspaceRuntime implements IWorkspaces {
    * session exactly once. A restored current session wins; otherwise the most
    * recent Workspace is connected (reusing or creating its blank session).
    * Later explicit clears stay cleared instead of retriggering this startup
-   * policy. A failed connect may retry on the next baseline projection.
+   * policy. A failed connect remains visible for an explicit retry.
    * @returns disposer for the baseline subscription; late work cannot navigate after disposal.
    */
   startInitialSelection(): () => void {
@@ -131,10 +153,9 @@ export class WorkspaceRuntime implements IWorkspaces {
           }
           state = 'done'
         },
-        (reason: unknown) => {
+        () => {
           if (disposed) return
-          state = 'waiting'
-          console.warn('initial workspace selection failed:', reason)
+          state = 'done'
         },
       )
     }
@@ -152,11 +173,12 @@ export class WorkspaceRuntime implements IWorkspaces {
    * then the current Session's Workspace, then the recent-Workspace
    * projection — connect its blank session and navigate there; with no
    * Workspace at all, clear the selection into the New Session view state.
-   * Connect failures are non-fatal (console diagnostics; the current view
-   * stays usable).
+   * Connect failures are non-fatal and remain visible in the workspace list
+   * projection; the current view stays usable.
    * @param workspaceId - explicit target Workspace for scoped actions.
+   * @returns true after navigation or an intentional clear, false after a connection failure.
    */
-  startSession(workspaceId?: WorkspaceId): void {
+  async startSession(workspaceId?: WorkspaceId): Promise<boolean> {
     const workspace = this.list.getSnapshot()
     const current = this.sessions.list.getSnapshot().current
     const currentWorkspaceId = current === undefined
@@ -164,13 +186,20 @@ export class WorkspaceRuntime implements IWorkspaces {
       : workspace.items.find(item => item.sessionIds.includes(current))?.workspaceId
     const target = workspaceId ?? currentWorkspaceId ?? workspace.recentWorkspaceId
     if (target === undefined) {
+      ++this.navigationRevision
+      this.replaceNavigationFailure(null)
       this.sessions.clear()
-      return
+      return true
     }
-    void this.connectWorkspace(target).then(
-      (sessionId) => { this.sessions.open(sessionId) },
-      (reason: unknown) => { console.warn('new session failed:', reason) },
-    )
+    try {
+      const sessionId = await this.connectWorkspace(target)
+      this.sessions.open(sessionId)
+      return true
+    } catch {
+      // connectWorkspace publishes the structured failure for every caller,
+      // including shell buttons whose void callback intentionally ignores this result.
+      return false
+    }
   }
 
   /**
@@ -338,8 +367,19 @@ export class WorkspaceRuntime implements IWorkspaces {
       error: workspace.error,
       baselinesReady,
       recentWorkspaceId: baselinesReady ? recentWorkspace(workspace.items, sessions.byId) : undefined,
+      navigationFailure: this.navigationFailure,
     })
   }
+
+  private replaceNavigationFailure(failure: WorkspaceListState['navigationFailure']): void {
+    if (this.navigationFailure === failure) return
+    this.navigationFailure = failure
+    this.project()
+  }
+}
+
+function errorMessage(reason: unknown): string {
+  return reason instanceof Error ? reason.message : String(reason)
 }
 
 /** Stable tie-breaking follows Host Workspace order. */

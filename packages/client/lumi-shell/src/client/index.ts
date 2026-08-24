@@ -30,6 +30,7 @@ export function apply(ctx: ClientContext): void {
       resumeSpeaking: () => { ctx.lumiCharacter.resumeSpeaking() },
       stopSpeaking: () => { ctx.lumiCharacter.stopSpeaking() },
       setPreference: (field, value) => { ctx.lumiCharacter.setPreference(field, value) },
+      retryPreference: () => { ctx.lumiCharacter.retryPreference() },
       refreshPacks: () => ctx.lumiCharacter.refreshPacks(),
     }),
   }, LumiFrame))

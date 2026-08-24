@@ -94,8 +94,8 @@ export const en = {
   onboardingTitle: 'Add an API key to get started',
   onboardingDescription: 'Configure the official DeepSeek provider to start building.',
   onboardingLater: 'Configure later',
-  onboardingSave: 'Save and continue',
-  onboardingSaving: 'Saving…',
+  onboardingSave: 'Verify and save',
+  onboardingSaving: 'Verifying…',
   keyRequired: 'Enter an API key to continue.',
 }
 
@@ -194,7 +194,7 @@ export const zh: { [Key in keyof typeof en]: string } = {
   onboardingTitle: '添加一个 API Key 开始使用',
   onboardingDescription: '配置 DeepSeek 官方模型，即可开始使用。',
   onboardingLater: '稍后配置',
-  onboardingSave: '保存并继续',
-  onboardingSaving: '保存中…',
+  onboardingSave: '验证并保存',
+  onboardingSaving: '验证中…',
   keyRequired: '请输入 API 密钥后继续。',
 }

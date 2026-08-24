@@ -32,7 +32,7 @@ import {
 } from './DeepSeekModelsEditor.tsx'
 import { apiKeyFailure } from './apiKey.ts'
 import { EditorFooter } from './EditorFooter.tsx'
-import { ModelListEditor } from './ModelListEditor.tsx'
+import { ModelListEditor, requestDiscoveredModels } from './ModelListEditor.tsx'
 import { deriveKeyRef, messageOf, protocolChoices } from './store.ts'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
@@ -210,6 +210,9 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   // as "no key supplied" rather than as a key — that is how a card whose
   // provider already has a stored key is edited without re-entering it.
   const keyValue = keyDraft.trim()
+  const verifiesDesktopDeepSeekCredential = layout === 'deepseek'
+    && typeof window !== 'undefined'
+    && (window as Window & { dshDesktop?: unknown }).dshDesktop !== undefined
   const credentialRequiredFailure = props.credentialRequired === true
     && keyDraft.length > 0 && keyValue.length === 0
     ? 'keyRequired' as const
@@ -242,6 +245,13 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
       && stringAt(fallback, 'apiKeyEnv') === undefined && keyValue.length > 0
       ? setPath(draft, ['apiKeyEnv'], keyRef)
       : draft
+    if (verifiesDesktopDeepSeekCredential && keyValue.length > 0) {
+      await requestDiscoveredModels(api, {
+        ...probe,
+        baseURL: probe.baseURL ?? DEEPSEEK_PUBLIC_BASE_URL,
+        apiKey: keyValue,
+      })
+    }
     if (props.credentialOnly !== true) {
       // The same checker gates the submit button, so a card cannot reach this
       // with a bad row; it stays because the schema check below would refuse

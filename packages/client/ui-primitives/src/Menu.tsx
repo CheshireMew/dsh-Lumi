@@ -9,7 +9,7 @@
 // internally past that; submenu-bearing menus are exempt (see .scrollable).
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CSSProperties, ReactNode } from 'react'
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { IconCheckOutline16 } from './icons/index.tsx'
@@ -44,6 +44,11 @@ export interface MenuLabel {
 
 /** One primary-menu entry: a row, a separator, or a heading label. */
 export type MenuEntry = MenuItem | MenuSeparator | MenuLabel
+
+function buttonsAtLevel(root: HTMLElement, level: string): HTMLButtonElement[] {
+  return Array.from(root.querySelectorAll<HTMLButtonElement>('button[data-menu-level]'))
+    .filter(button => button.dataset.menuLevel === level && !button.disabled)
+}
 
 function isSeparator(entry: MenuEntry): entry is MenuSeparator {
   return 'type' in entry && entry.type === 'separator'
@@ -107,6 +112,9 @@ export function Menu({ open, anchor, items, selectedId, selectedIds, onSelect, o
 }) {
   const rootRef = useRef<HTMLSpanElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
+  const wasOpenRef = useRef(false)
+  const keyboardSubmenuRef = useRef<string | null>(null)
   const [openSubmenuId, setOpenSubmenuId] = useState<string | null>(null)
   const [fixedPos, setFixedPos] = useState<CSSProperties | null>(null)
   const { arm: armClose, cancel: cancelClose } = usePointerGrace(onClose)
@@ -164,6 +172,26 @@ export function Menu({ open, anchor, items, selectedId, selectedIds, onSelect, o
     }
   }, [open, portal, align, side, getAnchorRect])
 
+  useLayoutEffect(() => {
+    if (open && !wasOpenRef.current) {
+      const active = document.activeElement
+      returnFocusRef.current = active instanceof HTMLElement ? active : null
+      buttonsAtLevel(listRef.current ?? document.body, 'root')[0]?.focus()
+    } else if (!open && wasOpenRef.current) {
+      const target = returnFocusRef.current
+      if (target?.isConnected === true) target.focus()
+      returnFocusRef.current = null
+    }
+    wasOpenRef.current = open
+  }, [open])
+
+  useLayoutEffect(() => {
+    const submenuId = keyboardSubmenuRef.current
+    if (openSubmenuId === null || submenuId !== openSubmenuId || listRef.current === null) return
+    keyboardSubmenuRef.current = null
+    buttonsAtLevel(listRef.current, `submenu:${submenuId}`)[0]?.focus()
+  }, [openSubmenuId])
+
   useEffect(() => {
     if (!open) {
       setOpenSubmenuId(null)
@@ -177,7 +205,9 @@ export function Menu({ open, anchor, items, selectedId, selectedIds, onSelect, o
       onClose()
     }
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      e.preventDefault()
+      onClose()
     }
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('keydown', onKeyDown)
@@ -199,6 +229,54 @@ export function Menu({ open, anchor, items, selectedId, selectedIds, onSelect, o
   // scroll clip would crop it, so only submenu-free menus get the height cap.
   const scrollable = !items.some(entry => !isSeparator(entry) && !isLabel(entry) && entry.submenu !== undefined && entry.submenu.length > 0)
 
+  const onMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    const target = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>('button[data-menu-level]')
+      : null
+    if (target === null || listRef.current === null) return
+    const level = target.dataset.menuLevel ?? 'root'
+    const buttons = buttonsAtLevel(listRef.current, level)
+    const index = buttons.indexOf(target)
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const delta = event.key === 'ArrowDown' ? 1 : -1
+      buttons[(index + delta + buttons.length) % buttons.length]?.focus()
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      ;(event.key === 'Home' ? buttons[0] : buttons.at(-1))?.focus()
+    } else if (event.key === 'ArrowRight' && target.dataset.menuHasSub === 'true') {
+      event.preventDefault()
+      const id = target.dataset.menuId
+      if (id !== undefined) {
+        if (openSubmenuId === id) {
+          buttonsAtLevel(listRef.current, `submenu:${id}`)[0]?.focus()
+        } else {
+          keyboardSubmenuRef.current = id
+          setOpenSubmenuId(id)
+        }
+      }
+    } else if (event.key === 'ArrowLeft' && level.startsWith('submenu:')) {
+      event.preventDefault()
+      const parentId = target.dataset.menuParent
+      setOpenSubmenuId(null)
+      Array.from(listRef.current.querySelectorAll<HTMLButtonElement>('button[data-menu-id]'))
+        .find(button => button.dataset.menuId === parentId)?.focus()
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      if (level.startsWith('submenu:')) {
+        const parentId = target.dataset.menuParent
+        setOpenSubmenuId(null)
+        Array.from(listRef.current.querySelectorAll<HTMLButtonElement>('button[data-menu-id]'))
+          .find(button => button.dataset.menuId === parentId)?.focus()
+      } else {
+        onClose()
+      }
+    } else if (event.key === 'Tab') {
+      onClose()
+    }
+  }
+
   const renderEntry = (entry: MenuEntry) => {
     if (isSeparator(entry)) {
       return <div key={entry.id} className={css.separator} role="separator" />
@@ -219,6 +297,10 @@ export function Menu({ open, anchor, items, selectedId, selectedIds, onSelect, o
         <button
           type="button"
           role="menuitem"
+          data-menu-level="root"
+          data-menu-id={entry.id}
+          data-menu-has-sub={hasSub ? 'true' : undefined}
+          tabIndex={-1}
           className={clsx(css.item, selected && css.selected, entry.danger === true && css.danger)}
           disabled={entry.disabled}
           aria-haspopup={hasSub ? 'menu' : undefined}
@@ -244,6 +326,10 @@ export function Menu({ open, anchor, items, selectedId, selectedIds, onSelect, o
                 key={sub.id}
                 type="button"
                 role="menuitem"
+                data-menu-level={`submenu:${entry.id}`}
+                data-menu-id={sub.id}
+                data-menu-parent={entry.id}
+                tabIndex={-1}
                 className={css.item}
                 disabled={sub.disabled}
                 onClick={() => { onSelect(sub.id) }}
@@ -272,6 +358,7 @@ export function Menu({ open, anchor, items, selectedId, selectedIds, onSelect, o
       // this stop, an item click re-fires the anchor row's own onClick
       // (open/toggle) after onSelect.
       onClick={(e) => { e.stopPropagation() }}
+      onKeyDown={onMenuKeyDown}
     >
       <div className={css.viewport} role="presentation">
         {items.map(renderEntry)}

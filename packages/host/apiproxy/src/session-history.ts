@@ -101,6 +101,27 @@ export function backscanArgs(
 }
 
 /**
+ * Index tool-call presenter inputs once for a complete history page.
+ * @param events - Page events in sequence order.
+ * @returns Last call payload for each call id; malformed arguments are absent.
+ */
+export function indexToolCallArgs(
+  events: readonly SessionEvent[],
+): ReadonlyMap<string, { name: string; args: unknown }> {
+  const calls = new Map<string, { name: string; args: unknown }>()
+  for (const event of events) {
+    if (event.type !== 'tool/call') continue
+    const data = event.data as ToolCallData
+    try {
+      calls.set(data.callId, { name: data.name, args: JSON.parse(data.arguments) })
+    } catch {
+      calls.delete(data.callId)
+    }
+  }
+  return calls
+}
+
+/**
  * Build one bounded, presenter-decorated history page.
  * @param ctx - Host context carrying tool presenters.
  * @param events - Stable session event prefix.
@@ -117,9 +138,10 @@ export function historyPage(
   scope?: ScopeKey,
 ): { events: HistoryEntry[]; hasMore: boolean } {
   const page = paginate(events, beforeSeq, maxMessages ?? DEFAULT_MAX_MESSAGES)
+  const calls = indexToolCallArgs(page.events)
   return {
     events: page.events.map((event) => {
-      const view = viewFor(ctx, event, callId => backscanArgs(page.events, callId), scope)
+      const view = viewFor(ctx, event, callId => calls.get(callId), scope)
       return { event, ...view === undefined ? {} : { view } }
     }),
     hasMore: page.hasMore,

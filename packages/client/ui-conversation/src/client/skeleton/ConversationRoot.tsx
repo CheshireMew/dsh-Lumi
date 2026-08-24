@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ConversationSlotProps, InputZone } from '../contract/slots.ts'
 import { HeroGlow, HeroShell, WorkspaceChip, workspaceLabel } from './EmptyHero.tsx'
 import css from './ConversationRoot.module.css'
@@ -30,6 +31,7 @@ export function ConversationRoot({
 
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<WorkspaceId | undefined>()
+  const [workspaceRetrying, setWorkspaceRetrying] = useState(false)
   const pickerAnchor = useRef<HTMLButtonElement>(null)
 
   // Publishes the seat's live height as --dsh-composer-height on the scroll
@@ -54,6 +56,7 @@ export function ConversationRoot({
   const pendingWorkspace = workspaces.items.find(
     workspace => workspace.workspaceId === pendingWorkspaceId,
   )
+  const navigationFailure = workspaces.navigationFailure
 
   // Clear the pending pick once the session lands in it, or when the picked
   // workspace disappears from a ready list (deleted from the sidebar).
@@ -123,6 +126,30 @@ export function ConversationRoot({
     </div>
   )
 
+  const workspaceFailure = navigationFailure === null ? null : (
+    <div className={css.heroWorkspaceRow} role="alert" data-workspace-navigation-failure="">
+      <span>
+        <strong>{t('workspace.openFailed')}</strong><br />
+        <small>{navigationFailure.message}</small>
+      </span>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={workspaceRetrying}
+        onClick={() => {
+          if (workspaceRetrying) return
+          setWorkspaceRetrying(true)
+          void selectWorkspace(navigationFailure.workspaceId).then(
+            () => { setWorkspaceRetrying(false) },
+            () => { setWorkspaceRetrying(false) },
+          )
+        }}
+      >
+        {t(workspaceRetrying ? 'workspace.retrying' : 'workspace.retry')}
+      </Button>
+    </div>
+  )
+
   // The placeholder chip ("Choose workspace") and the Workspace-trigger input travel
   // together: no workspace picked yet (cold start, no session at all), or a
   // blank session whose workspace vanished (deleted from the sidebar). The
@@ -161,6 +188,7 @@ export function ConversationRoot({
       {hero && <HeroGlow className={css.heroGlow} />}
       {hero && <HeroShell t={t} />}
       {hero && heroWorkspaceRow}
+      {workspaceFailure}
       {zone !== undefined && renderSlot('conversation.input.dock', zone)}
       {inputBar}
     </div>

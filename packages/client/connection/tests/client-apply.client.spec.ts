@@ -24,6 +24,8 @@ class FakeWebSocket extends EventTarget {
 
   readonly url: string
   readyState = FakeWebSocket.CONNECTING
+  closeCode: number | undefined
+  closeReason: string | undefined
 
   constructor(url: string | URL) {
     super()
@@ -36,8 +38,10 @@ class FakeWebSocket extends EventTarget {
     })
   }
 
-  close(): void {
+  close(code?: number, reason?: string): void {
     if (this.readyState === FakeWebSocket.CLOSED) return
+    this.closeCode = code
+    this.closeReason = reason
     this.readyState = FakeWebSocket.CLOSED
     this.dispatchEvent(new Event('close'))
   }
@@ -265,6 +269,32 @@ describe('connection client apply', () => {
     await vi.waitFor(() => { expect(sockets[0]?.url).toBe('wss://harness.example/api/events.mux') })
     abort.abort()
     await expect(pending).resolves.toMatchObject({ done: true })
+  })
+
+  it('closes and fails a WebSocket generation when decoded frames exceed the inbox bound', async () => {
+    ;(globalThis as Win).location = {
+      hostname: 'localhost', search: '', origin: 'http://localhost:3080',
+    }
+    ;(globalThis as WebSocketGlobal).WebSocket = FakeWebSocket as unknown as typeof WebSocket
+    const client = new WebApiClient(2)
+    const iterator = client.events.mux({}, new AbortController().signal)[Symbol.asyncIterator]()
+    const pending = iterator.next()
+    await vi.waitFor(() => { expect(sockets[0]?.readyState).toBe(FakeWebSocket.OPEN) })
+    for (const index of [1, 2, 3]) {
+      sockets[0]!.receive(JSON.stringify({
+        type: 'server-request',
+        rpcId: `overflow-${String(index)}`,
+        method: 'session/subscribed',
+        payload: { type: 'session/subscribed', sessionId: 'session-browser', lastSeq: index },
+      }))
+    }
+
+    await expect(pending).rejects.toThrow('exceeded its 2 frame capacity')
+    expect(sockets[0]).toMatchObject({
+      readyState: FakeWebSocket.CLOSED,
+      closeCode: 1013,
+      closeReason: 'client inbox overflow',
+    })
   })
 
   it('closes a WebSocket immediately when its signal was already aborted', async () => {

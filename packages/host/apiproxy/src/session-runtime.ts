@@ -10,6 +10,7 @@ import {
 import { resolveSessionPreset } from '@deepseek-ai/dsh-agent-presets'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import {
+  ApiRemoteSessionNotFound,
   ApiRemoteSubagentSessionOwnership as SubagentSessionOwnership,
   apiRemoteSubagentOwnershipError,
   createApiRemoteAgentResolver,
@@ -292,11 +293,15 @@ export class SessionRuntime {
     if (live !== undefined) return live
 
     const persistence = checkPersistedIdentity ? this.ctx.get('sessionPersistence') : undefined
-    const stored = persistence === undefined
-      ? undefined
-      : (await persistence.list()).find(header => header.id === sessionId)
-    if (persistence !== undefined && stored !== undefined) {
-      const inspected = await persistence.inspect(sessionId)
+    let inspected: Awaited<ReturnType<typeof inspectApiRemoteSession>> | undefined
+    if (persistence !== undefined) {
+      try {
+        inspected = await inspectApiRemoteSession(this.ctx, sessionId)
+      } catch (error: unknown) {
+        if (!(error instanceof ApiRemoteSessionNotFound)) throw error
+      }
+    }
+    if (inspected !== undefined) {
       if (this.hasSubagentOwner({ header: inspected.meta }, undefined)) {
         throw new SubagentSessionOwnership(sessionId)
       }

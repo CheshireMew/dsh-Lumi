@@ -789,9 +789,6 @@
         "src/**/*.ts",
         "src/**/*.tsx",
         "tests/**/*.ts"
-      ],
-      "ignoreDependencies": [
-        "@testing-library/react"
       ]
     },
     "packages/client/lumi-shell": {

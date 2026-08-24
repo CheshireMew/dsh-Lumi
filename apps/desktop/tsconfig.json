@@ -8,6 +8,7 @@
   "references": [
     { "path": "../cli" },
     { "path": "../../packages/boot/app-boot" },
+    { "path": "../../packages/client/lumi-character/tsconfig.host.json" },
     { "path": "../../packages/util/home-paths" },
     { "path": "../../packages/host/webserver" }
   ]

@@ -41,6 +41,7 @@ const workspace = (id: string, sessionIds: string[], title = id): WorkspaceView 
 const workspaceState = (items: readonly WorkspaceView[], archivedSessionIds: readonly SessionId[] = []): WorkspaceListState => ({
   items, archivedSessionIds, state: 'idle', phase: 'ready', error: null, baselinesReady: true,
   recentWorkspaceId: items[0]?.workspaceId,
+  navigationFailure: null,
 })
 function hook<T>(snapshot: T) {
   return function select<S>(selector: (state: T) => S): S { return selector(snapshot) }
@@ -67,12 +68,12 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     useWorkspaces: hook(workspaceState([])),
     useStore: bindSnapshotSelector(store),
     actions: store.actions,
-    startSession: vi.fn(),
+    startSession: vi.fn(async () => true),
     open: vi.fn(),
     searchSessions: vi.fn(async () => ({ items: [], hasMore: false })),
     searchResultLimit: 20,
     renameSession: vi.fn(async () => {}),
-    forkSession: vi.fn(),
+    forkSession: vi.fn(async () => {}),
     renameWorkspace: vi.fn(async () => {}),
     deleteWorkspace: vi.fn(async () => {}),
     archiveSession: vi.fn(async () => {}),
@@ -253,6 +254,41 @@ describe('WorkspaceBrowser', () => {
     expect(screen.getByRole('button', { name: '展开其余 2 个会话' })).toBeTruthy()
   })
 
+  it('materializes only the visible range of a high-cardinality grouped or flat tree', async () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 0, bottom: 640, left: 0, right: 280, width: 280, height: 640, x: 0, y: 0,
+      toJSON: () => ({}),
+    })
+    try {
+      const items = Array.from({ length: 500 }, (_, index) => summary(`many-${String(index)}`, 500 - index))
+      const b = mount({
+        useSessions: hook(sessionState(items)),
+        useWorkspaces: hook(workspaceState([workspace('alpha', items.map(item => item.id))])),
+      })
+      fireEvent.click(screen.getByText('alpha'))
+      fireEvent.click(screen.getByRole('button', { name: '展开其余 495 个会话' }))
+
+      const groupedTree = screen.getByRole('tree', { name: '会话' })
+      expect(groupedTree.querySelector('[data-logical-tree-rows="502"]')).toBeTruthy()
+      await waitFor(() => { expect(groupedTree.querySelectorAll('[role="treeitem"]').length).toBeGreaterThan(0) })
+      const groupedItems = [...groupedTree.querySelectorAll('[role="treeitem"]')]
+      expect(groupedItems.length).toBeGreaterThan(0)
+      expect(groupedItems.length).toBeLessThan(80)
+      expect(groupedItems.find(item => item.getAttribute('aria-level') === '2')?.getAttribute('aria-setsize'))
+        .toBe('500')
+
+      act(() => { b.store.actions.setGroupBy('flat') })
+      const flatTree = screen.getByRole('tree', { name: '会话' })
+      expect(flatTree.querySelector('[data-logical-tree-rows="500"]')).toBeTruthy()
+      const flatItems = [...flatTree.querySelectorAll('[role="treeitem"]')]
+      expect(flatItems.length).toBeGreaterThan(0)
+      expect(flatItems.length).toBeLessThan(80)
+      expect(flatItems[0]?.getAttribute('aria-setsize')).toBe('500')
+    } finally {
+      rect.mockRestore()
+    }
+  })
+
   it('shares one editable order across modes and promotes only while Last updated is active', async () => {
     const initial = sessionState([summary('one', 3), summary('two', 2)])
     const b = mount({
@@ -391,26 +427,80 @@ describe('WorkspaceBrowser', () => {
     expect(screen.getByRole('dialog')).toBeTruthy()
   })
 
-  it('logs and keeps the tree when the archive call rejects', async () => {
-    const rejection = new Error('archive exploded')
-    const archiveSession = vi.fn(async () => { throw rejection })
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      mount({
-        useSessions: hook(sessionState([summary('alpha-s', 1)])),
-        useWorkspaces: hook(workspaceState([workspace('alpha', ['alpha-s'])])),
-        archiveSession,
-      })
-      fireEvent.click(screen.getByText('alpha'))
-      fireEvent.click(screen.getByRole('button', { name: '会话“alpha-s”的操作' }))
-      fireEvent.click(screen.getByRole('menuitem', { name: '归档会话' }))
-      await Promise.resolve()
-      await Promise.resolve()
-      expect(warn).toHaveBeenCalledWith('session archive rejected:', rejection)
-      expect(screen.getByText('alpha-s')).toBeTruthy()
-    } finally {
-      warn.mockRestore()
-    }
+  it('keeps a rejected archive visible and retries the same session', async () => {
+    const archiveSession = vi.fn()
+      .mockRejectedValueOnce(new Error('archive exploded'))
+      .mockResolvedValueOnce(undefined)
+    mount({
+      useSessions: hook(sessionState([summary('alpha-s', 1)])),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['alpha-s'])])),
+      archiveSession,
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    fireEvent.click(screen.getByRole('button', { name: '会话“alpha-s”的操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '归档会话' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('归档会话未完成')
+    expect(alert.textContent).toContain('archive exploded')
+    expect(screen.getByText('alpha-s')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => {
+      expect(archiveSession).toHaveBeenCalledTimes(2)
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+  })
+
+  it('keeps a rejected fork visible and retries the same source session', async () => {
+    const forkSession = vi.fn()
+      .mockRejectedValueOnce(new Error('fork target unavailable'))
+      .mockResolvedValueOnce(undefined)
+    mount({
+      useSessions: hook(sessionState([summary('alpha-s', 1)])),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['alpha-s'])])),
+      forkSession,
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    fireEvent.click(screen.getByRole('button', { name: '会话“alpha-s”的操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '分叉会话' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Fork 会话未完成')
+    expect(alert.textContent).toContain('fork target unavailable')
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => {
+      expect(forkSession).toHaveBeenCalledTimes(2)
+      expect(forkSession).toHaveBeenLastCalledWith(sid('alpha-s'))
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+  })
+
+  it('retains overlapping action failures until each one is handled', async () => {
+    let rejectArchive!: (reason: unknown) => void
+    let rejectFork!: (reason: unknown) => void
+    const archiveSession = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectArchive = reject }))
+    const forkSession = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectFork = reject }))
+    mount({
+      useSessions: hook(sessionState([summary('alpha-s', 1)])),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['alpha-s'])])),
+      archiveSession,
+      forkSession,
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    fireEvent.click(screen.getByRole('button', { name: '会话“alpha-s”的操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '归档会话' }))
+    fireEvent.click(screen.getByRole('button', { name: '会话“alpha-s”的操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '分叉会话' }))
+
+    await act(async () => { rejectArchive(new Error('archive offline')); await Promise.resolve() })
+    await act(async () => { rejectFork(new Error('fork offline')); await Promise.resolve() })
+    expect(screen.getByRole('alert').textContent).toContain('archive offline')
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭提示' }))
+    expect(screen.getByRole('alert').textContent).toContain('fork offline')
+    fireEvent.click(screen.getByRole('button', { name: '关闭提示' }))
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('renders a fork child as a top-level row without a session twist', () => {
@@ -427,14 +517,15 @@ describe('WorkspaceBrowser', () => {
   })
 
   it('expands the target group before starting a session from its ＋', () => {
-    const startSession = vi.fn()
+    const startSession = vi.fn(async () => true)
     const b = mount({
       useSessions: hook(sessionState([summary('alpha-s', 1)])),
       useWorkspaces: hook(workspaceState([workspace('alpha', ['alpha-s'])])),
       startSession,
     })
-    startSession.mockImplementation(() => {
+    startSession.mockImplementation(async () => {
       expect(b.store.getSnapshot().groupExpansion).toEqual({ alpha: true })
+      return true
     })
     expect(screen.queryByText('alpha-s')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '在“alpha”中新建会话' }))
@@ -444,7 +535,7 @@ describe('WorkspaceBrowser', () => {
   })
 
   it('auto-expands the Ungrouped bucket for a loose current session; its header has no menu and its ＋ is inert', () => {
-    const startSession = vi.fn()
+    const startSession = vi.fn(async () => true)
     mount({
       useSessions: hook(sessionState([summary('loose', 1)], { current: sid('loose') })),
       useWorkspaces: hook(workspaceState([workspace('alpha', [])])),
@@ -455,6 +546,23 @@ describe('WorkspaceBrowser', () => {
     expect(screen.queryByRole('button', { name: '工作区“未分组”的操作' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '在“未分组”中新建会话' }))
     expect(startSession).not.toHaveBeenCalled()
+  })
+
+  it('shows a workspace navigation failure and retries its original target', async () => {
+    const startSession = vi.fn(async () => true)
+    const state: WorkspaceListState = {
+      ...workspaceState([workspace('alpha', [])]),
+      navigationFailure: { workspaceId: wid('alpha'), message: 'session create failed: offline' },
+    }
+    mount({ useWorkspaces: hook(state), startSession })
+
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain('新建会话未完成')
+    expect(alert.textContent).toContain('session create failed: offline')
+    expect(screen.queryByRole('button', { name: '关闭' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => { expect(startSession).toHaveBeenCalledWith(wid('alpha')) })
   })
 
   it('keeps an already-expanded group when the selection moves within it', () => {
@@ -1013,28 +1121,38 @@ describe('WorkspaceBrowser', () => {
     expect(insertSessionBefore).toHaveBeenCalledWith(wid('alpha'), sid('one'), undefined)
   })
 
-  it('logs and keeps the order when the reorder call rejects', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      const insertSessionBefore = vi.fn(async () => { throw new Error('stale anchor') })
-      const sessions = sessionState([summary('one', 2), summary('two', 1)])
-      mount({
-        useSessions: hook(sessions),
-        useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two'])])),
-        insertSessionBefore,
-      })
-      fireEvent.click(screen.getByText('alpha'))
-      const [one, two] = screen.getAllByRole('treeitem').slice(1) as [HTMLElement, HTMLElement]
-      two.getBoundingClientRect = () => ({
-        top: 150, bottom: 184, left: 0, right: 200, width: 200, height: 34, x: 0, y: 150, toJSON: () => ({}),
-      })
-      const dataTransfer = dragData()
-      fireEvent.dragStart(one, { dataTransfer })
-      fireDrag(two, 'drop', 180)
-      await waitFor(() => { expect(warn).toHaveBeenCalledWith('session reorder rejected:', expect.any(Error)) })
-    } finally {
-      warn.mockRestore()
-    }
+  it('commits a manual reorder only after Host acceptance and preserves a retry', async () => {
+    const insertSessionBefore = vi.fn()
+      .mockRejectedValueOnce(new Error('stale anchor'))
+      .mockResolvedValueOnce(undefined)
+    const sessions = sessionState([summary('one', 2), summary('two', 1)])
+    const b = mount({
+      useSessions: hook(sessions),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two'])])),
+      insertSessionBefore,
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    await waitFor(() => {
+      expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(['one', 'two'])
+    })
+    const [one, two] = screen.getAllByRole('treeitem').slice(1) as [HTMLElement, HTMLElement]
+    two.getBoundingClientRect = () => ({
+      top: 150, bottom: 184, left: 0, right: 200, width: 200, height: 34, x: 0, y: 150, toJSON: () => ({}),
+    })
+    fireEvent.dragStart(one, { dataTransfer: dragData() })
+    fireDrag(two, 'drop', 180)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('调整会话顺序未完成')
+    expect(alert.textContent).toContain('stale anchor')
+    expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(['one', 'two'])
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => {
+      expect(insertSessionBefore).toHaveBeenCalledTimes(2)
+      expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(['two', 'one'])
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
   })
 
   it('renames a workspace through the row menu dialog', async () => {

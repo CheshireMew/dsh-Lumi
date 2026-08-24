@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-所有客户端共用的 API 网关按所有权拆分。[`@deepseek-ai/dsh-api-protocol`](../../api/protocol/README.md) 拥有浏览器安全的 TypeScript 约定、schema、直接 payload 客户端和纯 fetch adapter。本包只拥有 Host 行为：`src/api-proxy.ts` 组装各 domain 实现、Session 运行时与读取、保留的列表快照、交互结算和事件流，默认导出的 `ApiProxyService` 则提供 `ctx.apiProxy`。`ApiProxyDefaults` 承载原生打开、Session 日志压缩、冷摘要工作上限、列表快照保留策略和 Session 搜索 provider 调用次数等部署选择。该包不注册任何路由；HTTP 等载体自行包装 `ctx.apiProxy`。随发行版交付的 Web 组合位于 [`packages/bundle/web-app/cordis.patch.yml`](../../bundle/web-app/cordis.patch.yml)，其默认 Agent（智能体）模型选择属于 base 组合包中的 [`@deepseek-ai/dsh-agent-default-model`](../../core/agent-default-model/README.md)。
+所有客户端共用的 API 网关按所有权拆分。[`@deepseek-ai/dsh-api-protocol`](../../api/protocol/README.md) 拥有浏览器安全的 TypeScript 约定、schema、直接 payload 客户端和纯 fetch adapter。本包只拥有 Host 行为：`src/api-proxy.ts` 组装各 domain 实现、Session 运行时与读取、持久化会话列表索引、交互结算和事件流，默认导出的 `ApiProxyService` 则提供 `ctx.apiProxy`。`ApiProxyDefaults` 承载原生打开、Session 日志压缩、冷摘要工作上限、cursor 租约策略和 Session 搜索 provider 调用次数等部署选择。该包不注册任何路由；HTTP 等载体自行包装 `ctx.apiProxy`。随发行版交付的 Web 组合位于 [`packages/bundle/web-app/cordis.patch.yml`](../../bundle/web-app/cordis.patch.yml)，其默认 Agent（智能体）模型选择属于 base 组合包中的 [`@deepseek-ai/dsh-agent-default-model`](../../core/agent-default-model/README.md)。
 
 ## 共享 Agent 默认值（`agent-default-model` Settings 分节）
 
@@ -24,7 +24,7 @@ Settings 分节中的 `reasoningEffort` 在 agent-default-model 插件配置中�
 
 首个回答认领待处理请求之前，系统会对照该请求校验问题响应。多选题的回答项可以同时携带 `selected` 中的请求选项标签与非空 `custom` 文本；单选题的回答项必须二选一。标签重复、标签未知、id 不匹配、批次不完整以及自定义文本为空都会以 `bad-response` 拒绝。
 
-`session.history` 会读取已附加 Session 的内存状态，或通过持久化检查冷日志，而不会恢复或发布 agent，然后按追加来源的消息边界分页：`maxMessages` 统计以追加方式进入 surface 的 `user/message` 和 `assistant/message` 事件，因此仅供模型使用的替换副本不占用配额。每一页仍是一段连续的原始事件区间，从而让压缩（compaction）的仅日志 `compaction/summary` 记录与引用它的替换留在同一页。
+`session.history` 会读取已附加 Session 的内存状态，或通过持久化检查冷日志，而不会恢复或发布 agent，然后按追加来源的消息边界分页。按精确 id 读取历史或恢复时会直接检查该 id，不会枚举会话目录。`maxMessages` 统计以追加方式进入 surface 的 `user/message` 和 `assistant/message` 事件，因此仅供模型使用的替换副本不占用配额。每一页仍是一段连续的原始事件区间，从而让压缩（compaction）的仅日志 `compaction/summary` 记录与引用它的替换留在同一页。投影工具结果前，每页只建立一次工具调用参数索引，不会对同一事件区间反复向后扫描。
 
 `session.history` 的尾页（不带 `beforeSeq`）额外携带一个可选的 `projections` 块——`ctx.sessionProjections`（`@deepseek-ai/dsh-session-projection`）上每个已注册单元的水位线快照，`asOfSeq` = 这些值共同反映到的最后一个事件 seq（空日志为 `-1`）。网关还订阅注册表的变更流，为每个状态发生变化的单元生成一个 `session/projection` mux 帧（`{sessionId, key, value, seq}`——实时推送状态，绝不入日志；客户端按 seq 高者胜维护一个按会话的通用值仓）。载体不持有其他领域的知识（每个值在注册表内部已过其单元自己的 schema；协议 schema 对 `values`/`value` 保持宽松）；loadOlder 页永不携带该块，未装注册表的组合则两个面都不提供。网关拥有两个单元：`sessionListMetadata` 缓存用于 `session.list` 的单调 blank→nonblank 转换与最新真人 prompt 时间；`imageLimits` 则把 prompt 准入时执行的 attachments 配置作为每次启动恒定的值发布（`apply` 保持状态引用不变，因此只靠基线携带、绝不产生变更帧），供客户端在提交前拒绝超限的加入并给上传入口标注上限，后者仅在注册表与 attachments 服务同时组合时激活。
 
@@ -44,7 +44,7 @@ Settings 分节中的 `reasoningEffort` 在 agent-default-model 插件配置中�
 
 Workspace 列表与 Session 列表是相互独立的重连基线。`workspace.create({ path })` 会接纳已有的规范目录，并允许由 basename 派生的标题重复。`workspace.insertBefore({ workspaceId, beforeWorkspaceId? })` 提交一次注册表顺序移动并应答完整顺序；单纯重排序会通过 `host/workspace-order-changed` 推送同一份完整顺序，而未知来源或锚点返回 `workspace-not-found`。`workspace.delete` 只移除 Workspace 注册记录，`session.create` 接受可选的预分配 Session id，`host/workspace-changed`、`host/workspace-removed` 与 `host/session-added` 则以任意到达顺序携带已提交的增量。`workspace.archiveSession` 和 `workspace.unarchiveSession` 更新注册表级全局归档集合，并应答完整的更新后集合；`workspace.list` 携带该集合作为重连基线，`host/archived-sessions-changed` 在每次持久变更后推送完整快照。归档只让会话离开普通分组，不触碰其日志和 workspace 记账；取消归档会恢复保留的位置，既非活动会话也未持久化的会话在归档时以 `session-not-found` 失败。删除注册记录会保留目录和会话日志；相关 Session 仍留在 `session.list` 中，并进入 Ungrouped。`SessionSummary.blank` 与 `host/session-added` 帧携带是否已开始过轮次：客户端隐藏空白会话并按 workspace 复用它们，在首个 `host/session-status(running:true)` 时翻转 blank，并以 `session.list` 作为重连权威。已附加摘要折叠实时日志。冷摘要信任缓存的 `blank: false`，但把缓存的 `true` 与 cache miss 都视为未经验证；当 `locate()` 报告的工件不大于 `coldBlankProbeMaxBytes` 资格阈值（默认 1 KiB）时，网关通过 `readFrom()` 读取该 Session 以核验空白状态。更大、无位置、已消失或不可读的工件保持可见。异步冷读取结束后，期间已附加的 Session 会改用实时日志生成摘要。`updatedAt` 始终使用同一个真人直接 prompt reducer：已附加 Session 折叠实时事件，冷 Session 使用与所列日志 revision 一同返回的精确持久索引。拾起边界、恢复 closer、注入的 user message 及其他写入都不会提升 Session 排序。
 
-`session.list` 默认最多返回 50 条摘要，显式请求时最多 100 条。第一页先按 `updatedAt` 降序、Session id 升序排列一次完整可见性观察，再保留这份不可变观察供后续分页；即使两次请求之间创建了 Session 或某个 Session 被新 prompt 提升，各页也不会混合不同状态。续传 cursor 不透明、有长度上限，并绑定当前网关实例。未完成观察的存活时间由 `sessionListSnapshotTtlMs` 控制（默认 60 秒），并存数量由 `sessionListMaxSnapshots` 控制（默认 8）；最近最少使用或已过期的 cursor 返回 `session-list-cursor-stale`，客户端可从第一页重启，且不会发布不完整基线。格式错误的 cursor 返回 `session-list-cursor-invalid`。
+`session.list` 默认最多返回 50 条摘要，显式请求时最多 100 条。它的 SQLite 派生索引保存当前按 `updatedAt`、Session id 排定的顺序，每页只读取 `limit + 1` 行；正常关闭后的重启可以立即服务该索引并在后台核对，首次创建索引或上次非正常关闭时则会先与会话持久化核对，再进入就绪状态。第一页会按 `sessionListSnapshotTtlMs`（默认 60 秒）为一代不可变索引视图取得租约，因此即使两次请求之间创建了 Session 或某个 Session 被新 prompt 提升，后续页也不会混合不同状态。短期行版本负责保留这份租约视图，并在最后一个 cursor 可能过期后清理。续传 cursor 不透明、有长度上限，并绑定当前网关实例；过期 cursor 返回 `session-list-cursor-stale`，格式错误的输入返回 `session-list-cursor-invalid`。事件日志仍是权威数据：实时真人直接 prompt 会增量更新派生行，核对过程则修复遗漏或只存在于持久化中的变更。
 
 `session.delete` 是显式破坏性保留操作。只要根或任何后代仍然实时，它就会在移除第一份日志前拒绝；存在后代时必须传入 `recursive: true`，获准的树按子级优先删除。取消可以发生在两次已提交删除之间；重新执行同一递归请求会跳过已经缺失的后代，并收敛到剩余树。每份已提交日志删除都会发出 `host/session-deleted`，该帧不同于 activation teardown 的 `host/session-removed`，因此所有已连接客户端都会移除持久行。归档没有按年龄自动过期：日志会一直保留到这项显式操作成功。
 

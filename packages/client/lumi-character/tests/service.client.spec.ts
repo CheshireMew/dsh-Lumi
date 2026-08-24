@@ -172,7 +172,7 @@ describe('LumiCharacterRuntime', () => {
     const synthesis = speechFixture()
     synthesis.getVoices.mockReturnValue([])
     const host = stubSettingsScope<typeof DEFAULT_UI_LUMI_SETTINGS>()
-    host.publish({ status: 'ready', value: DEFAULT_UI_LUMI_SETTINGS, revision: 4 })
+    host.publish({ status: 'ready', value: DEFAULT_UI_LUMI_SETTINGS, revision: 4, writable: true })
     const runtime = new LumiCharacterRuntime(host.scope)
     expect(runtime.getSnapshot().ttsUnavailableReason).toBe('no-voices')
     runtime.speak('不会进入系统朗读')
@@ -182,6 +182,40 @@ describe('LumiCharacterRuntime', () => {
     expect(host.set).toHaveBeenCalledWith('layoutMode', 'work')
     host.publish({ status: 'ready', value: DEFAULT_UI_LUMI_SETTINGS, revision: 5 })
     expect(runtime.getSnapshot().settings.layoutMode).toBe('scene')
+    runtime.dispose()
+  })
+
+  it('reports rejected preference persistence, restores Host state, and retries the exact choice', async () => {
+    speechFixture()
+    const host = stubSettingsScope<typeof DEFAULT_UI_LUMI_SETTINGS>()
+    host.publish({
+      status: 'ready', value: DEFAULT_UI_LUMI_SETTINGS, user: {}, revision: 1, writable: true,
+    })
+    const runtime = new LumiCharacterRuntime(host.scope)
+    runtime.setPreference('layoutMode', 'work')
+    expect(runtime.getSnapshot()).toMatchObject({
+      preferenceStatus: 'saving', settings: { layoutMode: 'work' },
+    })
+    await Promise.resolve()
+    expect(runtime.getSnapshot()).toMatchObject({
+      preferenceStatus: 'error',
+      preferenceFailure: { kind: 'persistence', field: 'layoutMode' },
+      settings: { layoutMode: 'scene' },
+    })
+
+    host.publish({
+      status: 'ready',
+      value: { ...DEFAULT_UI_LUMI_SETTINGS, layoutMode: 'work' },
+      user: { layoutMode: 'work' },
+      revision: 2,
+      writable: true,
+    })
+    runtime.retryPreference()
+    await Promise.resolve()
+    expect(host.set).toHaveBeenLastCalledWith('layoutMode', 'work')
+    expect(runtime.getSnapshot()).toMatchObject({
+      preferenceStatus: 'idle', preferenceFailure: undefined, settings: { layoutMode: 'work' },
+    })
     runtime.dispose()
   })
 

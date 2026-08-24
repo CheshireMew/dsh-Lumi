@@ -79,6 +79,11 @@ async function buildApi(
 ) {
   const ctx = new Context()
   await ctx.plugin(UserQuestionService)
+  ctx.provide('sessions', {
+    list: () => [],
+    get: (id: SessionId) => services.sessions?.get(id),
+    flush: async (session: { readonly id: SessionId }) => services.sessions?.flush(session) ?? false,
+  } as never)
   const query = services.query ?? true
   const persistence = services.persistence ?? true
   if (query) {
@@ -94,6 +99,7 @@ async function buildApi(
   }
   if (persistence) {
     ctx.provide('sessionPersistence', {
+      listSnapshots: async () => [],
       supportsRawArtifacts: persistence !== 'unsupported',
       readRaw: services.readRaw ?? (async (id: SessionId) => {
         if (persistence === 'throw') throw new Error('/host/private/session.jsonl')
@@ -112,7 +118,6 @@ async function buildApi(
       readImage,
     } as never)
   }
-  if (services.sessions !== undefined) ctx.provide('sessions', services.sessions as never)
   return createApiProxy(ctx, {
     defaultModelSelection: () => ({ provider: 'p', model: 'm' }),
     cwd: '/tmp',
@@ -130,9 +135,9 @@ const DEFAULT_API_PROXY_CONFIG = {
   sessionExportCompressionLevel: 6,
   coldBlankProbeMaxBytes: 1024,
   sessionSearchProviderCallLimit: 100,
+  eventQueueCapacity: 8_192,
   coldSummaryBatchSize: 16,
   sessionListSnapshotTtlMs: 60_000,
-  sessionListMaxSnapshots: 8,
 }
 
 describe('session export compression config', () => {
@@ -173,18 +178,18 @@ describe('cold blank probe config', () => {
 })
 
 describe('session list snapshot config', () => {
-  it('accepts positive integer lifetime and count bounds', () => {
-    expect(ApiProxyService.Config({ sessionListSnapshotTtlMs: 1, sessionListMaxSnapshots: 1 }))
+  it('accepts positive integer cursor lifetime and event queue bounds', () => {
+    expect(ApiProxyService.Config({ sessionListSnapshotTtlMs: 1, eventQueueCapacity: 1 }))
       .toEqual({
         ...DEFAULT_API_PROXY_CONFIG,
         sessionListSnapshotTtlMs: 1,
-        sessionListMaxSnapshots: 1,
+        eventQueueCapacity: 1,
       })
     for (const config of [
       { sessionListSnapshotTtlMs: 0 },
       { sessionListSnapshotTtlMs: 1.5 },
-      { sessionListMaxSnapshots: 0 },
-      { sessionListMaxSnapshots: 1.5 },
+      { eventQueueCapacity: 0 },
+      { eventQueueCapacity: 1.5 },
     ]) expect(() => ApiProxyService.Config(config)).toThrow()
   })
 })

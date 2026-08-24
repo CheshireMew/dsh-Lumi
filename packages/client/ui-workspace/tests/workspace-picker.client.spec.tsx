@@ -33,6 +33,7 @@ const sessions: SessionListState = {
 const workspaceState = (items: readonly WorkspaceView[]): WorkspaceListState => ({
   items, archivedSessionIds: [], state: 'idle', phase: 'ready', error: null, baselinesReady: true,
   recentWorkspaceId: items[0]?.workspaceId,
+  navigationFailure: null,
 })
 function anchor(): { current: HTMLElement } {
   const element = document.createElement('button')

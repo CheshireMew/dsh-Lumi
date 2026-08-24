@@ -5,12 +5,20 @@ import { AbstractApiClient } from './api.ts'
 import { hostFrameSchema, muxFrameSchema } from '@deepseek-ai/dsh-api-protocol/api/events.schema'
 import { serverRequestSchema } from '@deepseek-ai/dsh-api-protocol/api/rpc.schema'
 import { HOST_EVENTS_PATH, MUX_EVENTS_PATH } from '../api-path.ts'
+import { DEFAULT_WEBSOCKET_INBOX_CAPACITY } from '../limits.ts'
+import { SocketInbox } from './socket-inbox.ts'
 
-type SocketItem<F> = { kind: 'frame'; envelope: RpcRequest<F> } | { kind: 'end' }
 type Parser<F> = { parse(value: unknown): F }
 
 /** Browser platform subclass: unary/respond use fetch; mux/host use downlink-only WebSockets. */
 export class WebApiClient extends AbstractApiClient {
+  /** @param websocketInboxCapacity - Maximum decoded frames retained before reconnect. */
+  constructor(
+    private readonly websocketInboxCapacity = DEFAULT_WEBSOCKET_INBOX_CAPACITY,
+  ) {
+    super()
+  }
+
   protected doFetch(input: URL, init?: RequestInit): Promise<Response> {
     return globalThis.fetch(input, init)
   }
@@ -40,15 +48,18 @@ export class WebApiClient extends AbstractApiClient {
     const url = new URL(path, this.resolveBase())
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     const socket = new WebSocket(url)
-    const inbox: SocketItem<F>[] = []
+    const inbox = new SocketInbox<RpcRequest<F>>(this.websocketInboxCapacity)
     let wake: (() => void) | undefined
-    const enqueue = (item: SocketItem<F>): void => {
-      inbox.push(item)
+    let ended = false
+    let failure: Error | undefined
+    const signalConsumer = (): void => {
       wake?.()
       wake = undefined
     }
     const handleOpen = (): void => { onOpen?.() }
+    const hasEnded = (): boolean => ended
     const handleMessage = (event: MessageEvent): void => {
+      if (failure !== undefined) return
       let full: ServerRequest
       let frame: F
       try {
@@ -60,9 +71,18 @@ export class WebApiClient extends AbstractApiClient {
         return
       }
       this.onEnvelope(full)
-      enqueue({ kind: 'frame', envelope: { rpcId: full.rpcId, payload: frame } })
+      if (!inbox.push({ rpcId: full.rpcId, payload: frame })) {
+        failure = new Error(
+          `WebSocket inbox on ${path} exceeded its ${this.websocketInboxCapacity} frame capacity`,
+        )
+        inbox.clear()
+        if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+          socket.close(1013, 'client inbox overflow')
+        }
+      }
+      signalConsumer()
     }
-    const handleClose = (): void => { enqueue({ kind: 'end' }) }
+    const handleClose = (): void => { ended = true; signalConsumer() }
     const handleAbort = (): void => {
       if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) socket.close()
     }
@@ -73,11 +93,13 @@ export class WebApiClient extends AbstractApiClient {
     if (signal.aborted) handleAbort()
     try {
       while (true) {
-        while (inbox.length > 0) {
-          const item = inbox.shift() as SocketItem<F>
-          if (item.kind === 'end') return
-          yield item.envelope
+        let item = inbox.shift()
+        while (item !== undefined) {
+          yield item.value
+          item = inbox.shift()
         }
+        if (failure !== undefined) throw failure
+        if (hasEnded()) return
         await new Promise<void>((resolve) => { wake = resolve })
       }
     } finally {

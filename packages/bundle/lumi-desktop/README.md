@@ -2,11 +2,11 @@
 
 English | [中文](README.zh.md)
 
-The additive product layer applied after the official `@deepseek-ai/dsh-base` and `@deepseek-ai/dsh-web-app` bundles. Its patch inserts only `@dsh-lumi/client-character` and `@dsh-lumi/client-shell`, which keeps the complete product roster difference reviewable during upstream synchronization.
+The additive product layer applied after the official `@deepseek-ai/dsh-base` and `@deepseek-ai/dsh-web-app` bundles. Its patch inserts the Lumi profile plugin, `@dsh-lumi/client-character`, and `@dsh-lumi/client-shell`, which keeps the complete product roster difference reviewable during upstream synchronization. The profile plugin registers authenticated model discovery for `llm-deepseek`: the Models UI can test an unsaved API key against the configured endpoint's `/models` route before the credential store is changed.
 
 ## Model Experience
 
-None, as the bundle adds presentation, browser speech, local character settings, and local bond progress without adding system-prompt sections, tools, session events, or model-visible content.
+None, as the bundle adds presentation, browser speech, local character settings, local bond progress, and settings-time credential verification without adding system-prompt sections, tools, session events, or model-visible content.
 
 #### KV Cache effect
 

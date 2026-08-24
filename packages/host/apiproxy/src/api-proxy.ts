@@ -54,12 +54,13 @@ import { SessionListing } from './session-listing.ts'
 export {
   DEFAULT_COLD_BLANK_PROBE_MAX_BYTES,
   DEFAULT_COLD_SUMMARY_BATCH_SIZE,
-  DEFAULT_SESSION_LIST_MAX_SNAPSHOTS,
   DEFAULT_SESSION_LIST_SNAPSHOT_TTL_MS,
 } from './session-listing.ts'
 
 /** Default maximum provider calls made by one session search. */
 export const DEFAULT_SESSION_SEARCH_PROVIDER_CALL_LIMIT = 100
+/** Default maximum undelivered frames retained by one Host event stream. */
+export const DEFAULT_EVENT_QUEUE_CAPACITY = 8_192
 
 /**
  * Implement ApiProxy over a composed host context.
@@ -72,6 +73,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     ?? DEFAULT_SESSION_LOG_COMPRESSION_LEVEL
   const sessionSearchProviderCallLimit = defaults.sessionSearchProviderCallLimit
     ?? DEFAULT_SESSION_SEARCH_PROVIDER_CALL_LIMIT
+  const eventQueueCapacity = defaults.eventQueueCapacity ?? DEFAULT_EVENT_QUEUE_CAPACITY
   const sessionRuntime = new SessionRuntime(ctx, defaults)
   const sessionReader = new SessionReader(ctx, sessionRuntime)
   const workspaceCoordinator = new WorkspaceApiCoordinator(() => ctx.workspaceRegistry)
@@ -244,7 +246,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
     llm: createLlmApi(() => ctx.llm),
 
-    events: createEventsApi(ctx, interactions),
+    events: createEventsApi(ctx, interactions, eventQueueCapacity),
 
     downloads: createDownloadsApi(ctx, sessionExportCompressionLevel),
 

@@ -52,6 +52,7 @@ export function apply(ctx: ClientContext): void {
     resumeSpeaking: () => { character.resumeSpeaking() },
     stopSpeaking: () => { character.stopSpeaking() },
     setPreference: (field, value) => { character.setPreference(field, value) },
+    retryPreference: () => { character.retryPreference() },
     refreshPacks: () => character.refreshPacks(),
   })
 

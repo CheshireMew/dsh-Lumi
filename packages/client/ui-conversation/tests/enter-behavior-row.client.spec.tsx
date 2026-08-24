@@ -23,7 +23,7 @@ function emptySessions() {
 function emptyWorkspaces() {
   return bindSnapshotSelector(createSnapshotStore<WorkspaceListState>({
     items: [], archivedSessionIds: [], state: 'idle', phase: 'ready', error: null,
-    baselinesReady: true, recentWorkspaceId: undefined,
+    baselinesReady: true, recentWorkspaceId: undefined, navigationFailure: null,
   }))
 }
 

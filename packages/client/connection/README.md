@@ -10,7 +10,7 @@ The node half guards every entry under `/api` before bridging or upgrading (`src
 
 ## `/api` WebSocket downlinks
 
-`/api/events.mux` and `/api/events.host` each accept a WebSocket upgrade and send only the corresponding `ServerRequest` text messages to the browser; the client sends no application data over these sockets. If either socket ends, the current connection generation fails and rebuilds both streams; readiness still requires both sockets to be open and the `host.describe` HTTP call to succeed. Host teardown terminates both sockets, aborts their sources, and waits for source cleanup before returning. Ordinary network GETs to these paths return 426 with no SSE fallback; `toFetchHandler`'s SSE codec serves only the isomorphic in-process carrier.
+`/api/events.mux` and `/api/events.host` each accept a WebSocket upgrade and send only the corresponding `ServerRequest` text messages to the browser; the client sends no application data over these sockets. Each Host frame queue and decoded browser inbox is a bounded ring (default 8,192 messages). Capacity overflow fails that connection generation instead of silently discarding an unknown prefix: the Host iterator throws or the browser closes with 1013, then the controller rebuilds both streams and replays their authoritative baselines. Readiness still requires both sockets to be open and the `host.describe` HTTP call to succeed. Host teardown terminates both sockets, aborts their sources, and waits for source cleanup before returning. Ordinary network GETs to these paths return 426 with no SSE fallback; `toFetchHandler`'s SSE codec serves only the isomorphic in-process carrier.
 
 ## Model Experience
 
@@ -22,5 +22,5 @@ None; this package neither assembles nor sends a provider request.
 
 ## Known Limitations and Deferred Work
 
-- **History resumes an unattached session** — opening history may create the host-side agent and add latency to the first open; there is no persistence-only read path.
+- **One overflow restarts both downlinks** — mux and host frames share one connection generation, so saturation in either bounded inbox reconnects both streams. This keeps their baselines coherent but performs more recovery work than independent generations would.
 - **The `/api` bridge buffers each request body in memory** — `maxRequestBodyBytes` (default 160 MiB, sized for the default 100 MiB aggregate image limit after base64 expansion plus envelope headroom) is therefore also the per-request resident bound; a streaming body path would be needed to lower it without shrinking the image limits.

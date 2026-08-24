@@ -7,6 +7,7 @@ import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentFactory } from '@deepseek-ai/dsh-agent'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
+import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -78,6 +79,7 @@ async function harness(
   ctx.provide('sessionPersistence', {
     list: () => Promise.resolve([]),
     listSnapshots: () => Promise.resolve([]),
+    inspect: (id: SessionId) => Promise.reject(new SessionPersistenceNotFoundError(id)),
   } as never)
   await ctx.plugin(WorkspaceRegistry)
 

@@ -6,6 +6,8 @@ Web shell kernel: `new AppWebEntry(el, seams?).run()` mounts the whole client th
 
 Shell self-sufficiency (web2 hard rule): the kernel value-imports no plugin package — the boot status store and signals are hand-rolled here (`loader-status.ts`), so the loading page works while (and especially when) plugins fail. The app-shell assembly (`@deepseek-ai/dsh-client-app-shell`, a shell-owned pseudo entry with no npm package behind it) is the only module registered through `registerStatic`; it inject-waits on slots/sessions/layout like any plugin.
 
+An unsuccessful boot remains an operable shell state rather than a raw exception page. AppRoot localizes the human summary, keeps technical diagnostics collapsed, and exposes retry, desktop Harness restart, log-folder, and diagnostic-copy actions; a failed recovery action stays visible without replacing the original failure.
+
 `PLATFORM_MODULES` (src/platform.ts) is the single source of truth for shared modules: seed-table keys, tsdown client externals, and the Vite alias set are its projections.
 
 The optional override parameter `seams` forwards the module system's `loadBundle` transport override (`BootSeams`) for environments where external `<script>` execution cannot reach the page context; ordinary browser callers omit it.
@@ -22,5 +24,5 @@ None; this package neither assembles nor sends a provider request.
 
 ## Known Limitations and Deferred Work
 
-- **One-shot rendering by design** — the UI waits for the boot settle; a single entry failure keeps the loading page with a loud per-entry report, no partial availability (progressive rendering returns with its own project).
+- **One-shot rendering by design** — the UI waits for the boot settle; a single entry failure keeps the recovery page with its per-entry report and recovery actions, but no partial application availability (progressive rendering returns with its own project).
 - **Narrow-window shell behavior lacks an assembled walkthrough** — ui-layout implements the concession chain, but this package has no shell-level narrow-viewport acceptance case.

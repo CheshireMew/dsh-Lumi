@@ -1,10 +1,12 @@
 /** Simplified Chinese lumi-shell messages. */
 export const zh = {
   'mode.scene': '场景模式',
+  'mode.sceneNarrow': '窗口宽度不足 1100 px，场景模式暂不可用',
   'mode.work': '工作模式',
   'title.app': 'DeepSeek Harness · Lumi',
-  'title.packs': '角色包',
+  'title.packs': '角色包文件夹',
   'title.logs': '日志',
+  'title.actionFailed': '无法完成操作，请稍后重试。',
   'window.minimize': '最小化',
   'window.maximize': '最大化或还原',
   'window.close': '关闭',
@@ -34,10 +36,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 /** English lumi-shell messages. */
 export const en = {
   'mode.scene': 'Scene',
+  'mode.sceneNarrow': 'Scene mode is unavailable below 1100 px',
   'mode.work': 'Work',
   'title.app': 'DeepSeek Harness · Lumi',
-  'title.packs': 'Character packs',
+  'title.packs': 'Character pack folder',
   'title.logs': 'Logs',
+  'title.actionFailed': 'The action could not be completed. Try again.',
   'window.minimize': 'Minimize',
   'window.maximize': 'Maximize or restore',
   'window.close': 'Close',

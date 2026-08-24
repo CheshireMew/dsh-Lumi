@@ -107,7 +107,7 @@ function rowHalf(e: { clientY: number; currentTarget: HTMLElement }): 'before' |
  * @param props.t - the browser root's locale seat.
  * @returns the row element.
  */
-export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, t }: {
+export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, position, setSize, t }: {
   group: GroupNode
   onToggle: () => void
   onCreate?: (() => void) | undefined
@@ -115,6 +115,10 @@ export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, t }: 
   actions?: { rename: () => void; delete: () => void } | undefined
   /** Present only for real Workspace rows in the grouped view. */
   drag?: WorkspaceRowDragProps | undefined
+  /** One-based logical position among Workspace rows. */
+  position?: number | undefined
+  /** Logical Workspace-row count when DOM virtualization is active. */
+  setSize?: number | undefined
   t: RowTranslate
 }) {
   const row = group
@@ -132,6 +136,9 @@ export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, t }: 
     <div
       className={clsx(css.projectRow, menuOpen && css.menuOpen)}
       role="treeitem"
+      aria-level={1}
+      aria-posinset={position}
+      aria-setsize={setSize}
       aria-expanded={row.expanded}
       onClick={onToggle}
       draggable={drag !== undefined}
@@ -359,7 +366,7 @@ export function SearchResultItem({ result, currentId, onOpen, t }: {
  */
 export function SessionNodeItem({
   node, currentId, now, onOpen, onRename, onFork, onArchive, onUnarchive, onDelete,
-  archived = false, drag, flat = false, t,
+  archived = false, drag, flat = false, position, setSize, t,
 }: {
   node: SessionNode
   currentId: string | undefined
@@ -381,6 +388,10 @@ export function SessionNodeItem({
   drag?: RowDragProps | undefined
   /** The row is rendered without a parent Workspace header. */
   flat?: boolean | undefined
+  /** One-based logical position in the current tree level. */
+  position?: number | undefined
+  /** Logical row count at the current tree level when DOM virtualization is active. */
+  setSize?: number | undefined
   t: RowTranslate
 }) {
   const row = node
@@ -420,6 +431,9 @@ export function SessionNodeItem({
         drag?.marker === 'before' && css.dropBefore, drag?.marker === 'after' && css.dropAfter,
       )}
       role="treeitem"
+      aria-level={flat ? 1 : 2}
+      aria-posinset={position}
+      aria-setsize={setSize}
       aria-selected={selected}
       onClick={() => { onOpen(node.id) }}
       draggable={drag !== undefined}

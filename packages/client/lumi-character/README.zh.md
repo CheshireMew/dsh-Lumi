@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-Electron Lumi 外壳的角色领域。宿主端注册 `ui-lumi` 设置命名空间，并从 `$DSH_HOME/lumi/packs` 提供 Character Pack v1 素材；浏览器端组合彼此独立的角色包传输校验、语音播放、有界默契账本、角色包实时刷新、可观察角色状态、「常规设置」配置项，以及每条助手消息的朗读、暂停、继续和停止操作。
+Electron Lumi 外壳的角色领域。宿主端注册 `ui-lumi` 设置命名空间，并从 `$DSH_HOME/lumi/packs` 提供 Character Pack v1 素材；浏览器端组合彼此独立的角色包传输校验、语音播放、有界默契账本、角色包实时刷新、可观察角色状态、「常规设置」配置项，以及每条助手消息的朗读、暂停、继续和停止操作。设置项会以保存中、失败、重试、回退和诊断状态持续呈现偏好写入与角色包刷新；桌面角色包管理器会显示预览、作者、版本、许可证、当前选择和目录校验导入结果。
 
 包根 tsconfig 是显式 Host 与 Client leaf 之上的 solution。Host 编译拥有本地角色包发现、设置注册、路由和不变量伴随插件；Client 编译拥有浏览器状态、语音与组件。bond、manifest、内置角色包和设置模块作为完全相同的共享输入列入两个 leaf；浏览器消费方通过专用的 `@dsh-lumi/client-character/contract` 子路径导入角色包类型。直接 Project Reference 必须指向匹配的 leaf，避免 Host 构建在 Typert 生成 Client Remote 声明前进入客户端代码。
 

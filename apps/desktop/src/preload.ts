@@ -26,5 +26,6 @@ contextBridge.exposeInMainWorld('dshDesktop', {
     restartHarness: () => ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.restartHarness) as Promise<void>,
     openLogsFolder: () => ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.openLogs) as Promise<void>,
     openCharacterPacksFolder: () => ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.openPacks) as Promise<void>,
+    importCharacterPack: () => ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.importPack) as Promise<unknown>,
   },
 })

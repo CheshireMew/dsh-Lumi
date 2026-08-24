@@ -44,7 +44,7 @@ function mountBar(shell: SessionInputShell, over?: { running?: boolean; disabled
     })),
     useWorkspaces: bindSnapshotSelector(createSnapshotStore({
       items: [], archivedSessionIds: [], state: 'idle', phase: 'ready', error: null,
-      baselinesReady: true, recentWorkspaceId: undefined,
+      baselinesReady: true, recentWorkspaceId: undefined, navigationFailure: null,
     })),
     useProjection: (() => undefined),
     useInput: bindSnapshotSelector(shell.state),

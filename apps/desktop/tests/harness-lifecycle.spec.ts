@@ -97,7 +97,7 @@ describe('HarnessLifecycleController', () => {
     vi.advanceTimersByTime(config.startupTimeoutMs)
     expect(processes[0]?.kills).toBe(1)
     expect(spies.onFailure).toHaveBeenCalledWith(
-      'startup-timeout', `Harness 在 ${config.startupTimeoutMs}ms 内未就绪。`, undefined,
+      'startup-timeout', `Harness did not become ready within ${config.startupTimeoutMs}ms.`, undefined,
     )
   })
 
@@ -113,7 +113,9 @@ describe('HarnessLifecycleController', () => {
     vi.runAllTimers()
     expect(processes).toHaveLength(3)
     expect(spies.onLoading).toHaveBeenCalledTimes(2)
-    expect(spies.onFailure).toHaveBeenCalledWith('worker-exit', 'Harness 已退出（代码 9）。', undefined)
+    expect(spies.onLoading).toHaveBeenNthCalledWith(1, { kind: 'retrying', attempt: 1, total: 2 })
+    expect(spies.onLoading).toHaveBeenNthCalledWith(2, { kind: 'retrying', attempt: 2, total: 2 })
+    expect(spies.onFailure).toHaveBeenCalledWith('worker-exit', 'Harness exited with code 9.', undefined)
   })
 
   it('restarts only after the old worker acknowledges the restart command', async () => {
@@ -126,7 +128,7 @@ describe('HarnessLifecycleController', () => {
     processes[0]?.exit(0)
     await restart
     expect(processes).toHaveLength(2)
-    expect(spies.onLoading).toHaveBeenCalledWith('正在重新启动 Harness…')
+    expect(spies.onLoading).toHaveBeenCalledWith({ kind: 'restarting' })
   })
 
   it('waits for graceful shutdown and kills only after its deadline', async () => {

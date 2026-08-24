@@ -3,7 +3,7 @@ import {
   existsSync, mkdirSync, readFileSync, readdirSync, statSync, watch,
   type FSWatcher,
 } from 'node:fs'
-import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { ServerResponse } from 'node:http'
 import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import { createBuiltinManifest } from './builtin.ts'
@@ -37,6 +37,11 @@ interface CatalogSnapshot extends LumiPackCatalogView {
 interface PackLogger {
   warn: (value: string | Error) => void
 }
+
+/** Desktop import preflight without copying or mutating the selected directory. */
+export type LumiPackInspection =
+  | { ok: true; manifest: LumiPackManifest }
+  | { ok: false; code: 'missing-manifest' | 'invalid-json' | 'id-mismatch' | 'invalid-pack'; detail: string }
 
 /** JSON object guard. */
 function record(value: unknown): value is Record<string, unknown> {
@@ -279,6 +284,31 @@ function readPack(dir: string, directory: string): LoadedPack | undefined {
     },
     resolved: parsedAssets.resolved,
   }
+}
+
+/**
+ * Validate one selected pack directory through the same parser used by the live catalog.
+ * @param directory - Candidate pack root containing `manifest.json`.
+ * @param expectedId - Directory identity used for staging revalidation; defaults to the selected folder name.
+ * @returns Validated manifest or a stable import error code.
+ */
+export function inspectLumiPackDirectory(directory: string, expectedId = basename(directory)): LumiPackInspection {
+  const manifestPath = join(directory, 'manifest.json')
+  if (!existsSync(manifestPath) || !statSync(manifestPath).isFile()) {
+    return { ok: false, code: 'missing-manifest', detail: 'manifest.json is missing' }
+  }
+  let raw: unknown
+  try { raw = JSON.parse(readFileSync(manifestPath, 'utf8')) } catch {
+    return { ok: false, code: 'invalid-json', detail: 'manifest.json is not valid JSON' }
+  }
+  const id = record(raw) ? raw['id'] : undefined
+  if (typeof id !== 'string' || id !== expectedId) {
+    return { ok: false, code: 'id-mismatch', detail: `manifest id must match directory name "${expectedId}"` }
+  }
+  const loaded = readPack(directory, expectedId)
+  return loaded === undefined
+    ? { ok: false, code: 'invalid-pack', detail: 'manifest or referenced assets do not satisfy Character Pack v1' }
+    : { ok: true, manifest: loaded.manifest }
 }
 
 /** Encode a path segment without allowing slash semantics. */

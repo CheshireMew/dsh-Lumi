@@ -322,7 +322,7 @@ describe('DetailsPanel diff Output section', () => {
       })
     const workspaces = createSnapshotStore<WorkspaceListState>({
       items: [], archivedSessionIds: [], state: 'idle', phase: 'ready', error: null,
-      baselinesReady: true, recentWorkspaceId: undefined,
+      baselinesReady: true, recentWorkspaceId: undefined, navigationFailure: null,
     })
     return render(
       <DetailsPanel

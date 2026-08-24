@@ -2,11 +2,11 @@
 
 [English](README.md) | 中文
 
-这是叠加在官方 `@deepseek-ai/dsh-base` 和 `@deepseek-ai/dsh-web-app` 组合包之后的产品层。它的 patch 只插入 `@dsh-lumi/client-character` 与 `@dsh-lumi/client-shell`，因此同步上游时可以完整审查产品配置项的差异。
+这是叠加在官方 `@deepseek-ai/dsh-base` 和 `@deepseek-ai/dsh-web-app` 组合包之后的产品层。它的 patch 会插入 Lumi Profile 插件、`@dsh-lumi/client-character` 与 `@dsh-lumi/client-shell`，因此同步上游时可以完整审查产品配置项的差异。Profile 插件为 `llm-deepseek` 注册带鉴权的模型发现能力：模型设置界面会先用尚未保存的 API Key 请求当前端点的 `/models`，验证成功后才改动凭据存储。
 
 ## 模型体验
 
-无，因为该组合包只增加界面表现、浏览器语音、本地角色设置和本地好感度，不会增加系统提示词段、工具、会话事件或其它模型可见内容。
+无，因为该组合包只增加界面表现、浏览器语音、本地角色设置、本地好感度和设置阶段的凭据验证，不会增加系统提示词段、工具、会话事件或其它模型可见内容。
 
 #### KV Cache 影响
 

@@ -280,6 +280,40 @@ describe('Menu', () => {
     expect(screen.queryByRole('menuitem', { name: 'Create ok' })).toBeNull()
   })
 
+  it('supports roving keys, submenu entry and exit, and restores the trigger focus', async () => {
+    const onClose = vi.fn()
+    const trigger = <button type="button">Open menu</button>
+    const menuItems = [
+      { id: 'first', label: 'First' },
+      { id: 'disabled', label: 'Disabled', disabled: true },
+      { id: 'parent', label: 'Parent', submenu: [{ id: 'child', label: 'Child' }] },
+      { id: 'last', label: 'Last' },
+    ]
+    const { rerender } = render(
+      <Menu open={false} anchor={trigger} items={menuItems} onSelect={() => {}} onClose={onClose} />)
+    const triggerButton = screen.getByRole('button', { name: 'Open menu' })
+    triggerButton.focus()
+    rerender(<Menu open anchor={trigger} items={menuItems} onSelect={() => {}} onClose={onClose} />)
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'First' }))
+
+    fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Last' }))
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Home' })
+    fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowDown' })
+    const parent = screen.getByRole('menuitem', { name: 'Parent' })
+    expect(document.activeElement).toBe(parent)
+    fireEvent.keyDown(parent, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Child' }))
+    fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(parent)
+    fireEvent.keyDown(parent, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    rerender(<Menu open={false} anchor={trigger} items={menuItems} onSelect={() => {}} onClose={onClose} />)
+    await Promise.resolve()
+    expect(document.activeElement).toBe(triggerButton)
+  })
+
   it('portal mode prefers getAnchorRect over measuring its own wrapper', () => {
     const rect = { left: 40, right: 72, top: 100, bottom: 128, width: 32, height: 28, x: 40, y: 100, toJSON: () => ({}) } as DOMRect
     render(
@@ -405,6 +439,50 @@ describe('Modal', () => {
     const mask = document.querySelector('[aria-hidden="true"]') as HTMLElement
     fireEvent.click(mask)
     expect(onClose).toHaveBeenCalledTimes(2)
+  })
+
+  it('traps focus, makes the background inert, and restores the opener', async () => {
+    const opener = <button type="button">Open dialog</button>
+    const { container, rerender } = render(<>{opener}</>)
+    const trigger = screen.getByRole('button', { name: 'Open dialog' })
+    trigger.focus()
+    rerender(
+      <>
+        {opener}
+        <Modal open onClose={() => {}} title="Preferences" closeLabel="Close preferences" footer={<button type="button">Save</button>}>
+          <input aria-label="Name" autoFocus />
+        </Modal>
+      </>,
+    )
+    expect(container.inert).toBe(true)
+    const name = screen.getByRole('textbox', { name: 'Name' })
+    expect(document.activeElement).toBe(name)
+    const save = screen.getByRole('button', { name: 'Save' })
+    save.focus()
+    fireEvent.keyDown(save, { key: 'Tab' })
+    const close = screen.getByRole('button', { name: 'Close preferences' })
+    expect(document.activeElement).toBe(close)
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(save)
+
+    rerender(<>{opener}</>)
+    await Promise.resolve()
+    expect(container.inert).toBe(false)
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('routes Escape only to the top nested dialog', () => {
+    const closeOuter = vi.fn()
+    const closeInner = vi.fn()
+    render(
+      <>
+        <Modal open onClose={closeOuter} title="Outer"><button type="button">Outer action</button></Modal>
+        <Modal open onClose={closeInner} title="Inner"><button type="button">Inner action</button></Modal>
+      </>,
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(closeInner).toHaveBeenCalledTimes(1)
+    expect(closeOuter).not.toHaveBeenCalled()
   })
 })
 

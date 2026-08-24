@@ -364,7 +364,7 @@ describe('workspaces', () => {
     await runtime.workspaces.update((draft) => { draft.phase = 'pending' })
     expect(view.container.textContent).toContain('ws:pending')
 
-    runtime.workspaces.startSession('w1' as WorkspaceId)
+    await runtime.workspaces.startSession('w1' as WorkspaceId)
     await expect(runtime.workspaces.connectWorkspace('w2' as WorkspaceId)).resolves.toBe('session-of-w2')
     expect(runtime.workspaces.calls).toEqual([
       { method: 'startSession', args: ['w1'] },

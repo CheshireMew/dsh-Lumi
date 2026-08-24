@@ -20,10 +20,10 @@ interface Bench {
   svc: SessionRuntime
 }
 
-function bench(): Bench {
+function bench(maxResidentSessions?: number): Bench {
   const ctx = new Context()
   const api = new FakeApiClient()
-  const svc = new SessionRuntime(ctx, api, fakeRemote())
+  const svc = new SessionRuntime(ctx, api, fakeRemote(), undefined, maxResidentSessions)
   return { ctx, api, svc }
 }
 
@@ -120,6 +120,27 @@ describe('search', () => {
 })
 
 describe('scope tree', () => {
+  it('bounds materialized scopes while keeping the staged session resident', async () => {
+    const b = bench(2)
+    await feedList(b, [{ id: 's1' }, { id: 's2' }, { id: 's3' }])
+    b.svc.open(sid('s1'))
+    const ctx1 = b.svc.scope(sid('s1')) as Context
+    const ctx2 = b.svc.scope(sid('s2')) as Context
+    const ctx3 = b.svc.scope(sid('s3')) as Context
+    await Promise.resolve()
+
+    expect(b.svc.sessionOf(ctx1)).toBeDefined()
+    expect(b.svc.sessionOf(ctx2)).toBeUndefined()
+    expect(b.svc.sessionOf(ctx3)).toBeDefined()
+
+    const rebuilt2 = b.svc.scope(sid('s2')) as Context
+    await Promise.resolve()
+    expect(rebuilt2).not.toBe(ctx2)
+    expect(b.svc.sessionOf(rebuilt2)).toBeDefined()
+    expect(b.svc.sessionOf(ctx3)).toBeUndefined()
+    expect(b.svc.sessionOf(ctx1)).toBeDefined()
+  })
+
   it('mints lazily on first resolution, tags the ctx, and keeps binding identity stable', async () => {
     const b = bench()
     await feedList(b, [{ id: 's1' }])

@@ -68,7 +68,7 @@ function workspace(id = 'w1'): WorkspaceView {
 
 const workspaceState = (items: readonly WorkspaceView[]): WorkspaceListState => ({
   items, archivedSessionIds: [], state: 'idle', phase: 'ready', error: null,
-  baselinesReady: true, recentWorkspaceId: undefined,
+  baselinesReady: true, recentWorkspaceId: undefined, navigationFailure: null,
 })
 
 function conversationSnapshot(overrides: Partial<ConversationSnapshot> = {}): ConversationSnapshot {
@@ -251,7 +251,7 @@ function mount(
   }
   const view = render(<ConversationRoot {...props} />)
   return {
-    view, chat, sink, retargetWorkspace, session, slotCalls, seatOwners, open,
+    view, chat, sink, retargetWorkspace, session, workspaces, slotCalls, seatOwners, open,
     pickerOwner: () => pickerOwner,
     rerender: () => { view.rerender(<ConversationRoot {...props} />) },
   }
@@ -476,6 +476,35 @@ describe('ConversationRoot resident composer', () => {
     expect(selectWorkspace).toHaveBeenCalledWith(wid('second'))
     expect(b.view.queryByText('Selected Folder')).toBeNull()
     expect(b.view.getByText('one')).toBeTruthy()
+  })
+
+  it('keeps the raw workspace navigation failure visible and retries the same target', async () => {
+    let finishRetry!: () => void
+    const selectWorkspace = vi.fn(() => new Promise<void>((resolve) => { finishRetry = resolve }))
+    const b = mount(
+      conversationSnapshot({ composerPhase: 'blank', blank: true }),
+      [
+        { ...workspace('one'), sessionIds: [SID] },
+        { ...workspace('second'), title: 'Selected Folder' },
+      ],
+      selectWorkspace,
+    )
+
+    act(() => {
+      b.workspaces.set({
+        ...b.workspaces.getSnapshot(),
+        navigationFailure: { workspaceId: wid('second'), message: 'session create failed: network offline' },
+      })
+    })
+    const alert = b.view.getByRole('alert')
+    expect(alert.textContent).toContain('无法打开工作区')
+    expect(alert.textContent).toContain('session create failed: network offline')
+
+    fireEvent.click(b.view.getByRole('button', { name: '重试' }))
+    expect(selectWorkspace).toHaveBeenCalledWith(wid('second'))
+    expect(b.view.getByRole('button', { name: '正在重试…' })).toBeTruthy()
+    await act(async () => { finishRetry(); await Promise.resolve() })
+    expect(b.view.getByRole('button', { name: '重试' })).toBeTruthy()
   })
 
   it('blank session keeps the interactive picker chip (workspace switchable until the first message)', () => {

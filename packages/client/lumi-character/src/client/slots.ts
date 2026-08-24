@@ -12,6 +12,7 @@ export interface LumiCharacterInjected {
   resumeSpeaking: () => void
   stopSpeaking: () => void
   setPreference: LumiCharacterRuntime['setPreference']
+  retryPreference: () => void
   refreshPacks: () => Promise<void>
 }
 

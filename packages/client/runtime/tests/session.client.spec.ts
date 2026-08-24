@@ -877,9 +877,15 @@ describe('remaining branches', () => {
     expect(session.getSnapshot().promptError).toBeNull()
   })
 
-  it('dispose is a reserved no-op on resident instances', () => {
-    const { session } = makeSession()
-    expect(() => { session.dispose() }).not.toThrow()
+  it('dispose releases the materialized window and returns the instance to cold state', async () => {
+    const { api, session } = makeSession()
+    api.onHistory = () => histResponse(plainTurn(0, 0, 'a', 'b'))
+    await session.open()
+    expect(session.getSnapshot().nodes.length).toBeGreaterThan(0)
+
+    session.dispose()
+
+    expect(session.getSnapshot()).toMatchObject({ openState: 'cold', nodes: [], pending: [] })
   })
 
   it('carries history-entry and mux-frame views into the business-neutral Event input', async () => {

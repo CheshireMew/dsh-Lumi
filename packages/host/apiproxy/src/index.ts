@@ -21,8 +21,8 @@ import {
   createApiProxy,
   DEFAULT_COLD_SUMMARY_BATCH_SIZE,
   DEFAULT_COLD_BLANK_PROBE_MAX_BYTES,
+  DEFAULT_EVENT_QUEUE_CAPACITY,
   DEFAULT_SESSION_SEARCH_PROVIDER_CALL_LIMIT,
-  DEFAULT_SESSION_LIST_MAX_SNAPSHOTS,
   DEFAULT_SESSION_LIST_SNAPSHOT_TTL_MS,
 } from './api-proxy.ts'
 import {
@@ -60,6 +60,8 @@ export interface Config {
    * @default 100
    */
   sessionSearchProviderCallLimit?: number
+  /** Maximum undelivered frames retained by each event stream before reconnect recovery. */
+  eventQueueCapacity?: number
   /**
    * Maximum cold-session summaries resolved concurrently.
    * @default 16
@@ -70,11 +72,8 @@ export interface Config {
    * @default 60000
    */
   sessionListSnapshotTtlMs?: number
-  /**
-   * Maximum incomplete `session.list` observations retained in memory.
-   * @default 8
-   */
-  sessionListMaxSnapshots?: number
+  /** Dedicated SQLite path for the derived session-list index. */
+  sessionListIndexPath?: string
 }
 
 /**
@@ -95,9 +94,10 @@ export class ApiProxyService extends Service implements ApiProxy {
     coldBlankProbeMaxBytes: z.natural().default(DEFAULT_COLD_BLANK_PROBE_MAX_BYTES),
     sessionSearchProviderCallLimit: z.number().step(1).min(1)
       .default(DEFAULT_SESSION_SEARCH_PROVIDER_CALL_LIMIT),
+    eventQueueCapacity: z.number().step(1).min(1).default(DEFAULT_EVENT_QUEUE_CAPACITY),
     coldSummaryBatchSize: z.number().step(1).min(1).default(DEFAULT_COLD_SUMMARY_BATCH_SIZE),
     sessionListSnapshotTtlMs: z.number().step(1).min(1).default(DEFAULT_SESSION_LIST_SNAPSHOT_TTL_MS),
-    sessionListMaxSnapshots: z.number().step(1).min(1).default(DEFAULT_SESSION_LIST_MAX_SNAPSHOTS),
+    sessionListIndexPath: z.string(),
   })
 
   readonly sessions: ApiProxy['sessions']
@@ -130,15 +130,18 @@ export class ApiProxyService extends Service implements ApiProxy {
       ...(config.sessionSearchProviderCallLimit === undefined
         ? {}
         : { sessionSearchProviderCallLimit: config.sessionSearchProviderCallLimit }),
+      ...(config.eventQueueCapacity === undefined
+        ? {}
+        : { eventQueueCapacity: config.eventQueueCapacity }),
       ...(config.coldSummaryBatchSize === undefined
         ? {}
         : { coldSummaryBatchSize: config.coldSummaryBatchSize }),
       ...(config.sessionListSnapshotTtlMs === undefined
         ? {}
         : { sessionListSnapshotTtlMs: config.sessionListSnapshotTtlMs }),
-      ...(config.sessionListMaxSnapshots === undefined
+      ...(config.sessionListIndexPath === undefined
         ? {}
-        : { sessionListMaxSnapshots: config.sessionListMaxSnapshots }),
+        : { sessionListIndexPath: config.sessionListIndexPath }),
     })
     this.sessions = api.sessions
     this.subagents = api.subagents

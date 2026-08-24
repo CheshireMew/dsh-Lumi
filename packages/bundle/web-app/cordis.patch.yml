@@ -56,10 +56,20 @@
       config:
         root: !!js dshHomePath('storages')
 
+    # High-frequency derived projection checkpoints use row-level UPSERTs.
+    # Other domains retain their human-readable JSON files; an old
+    # session_projcache.json is an inactive disposable cache and is ignored.
+    - id: storage-sqlite
+      name: '@deepseek-ai/dsh-storage-sqlite'
+      config:
+        path: !!js dshHomePath('storages/session-projections.sqlite3')
+
     - id: storage-domain
       name: '@deepseek-ai/dsh-storage-domain'
       config:
         backend: json
+        routes:
+          session_projcache: sqlite
 
     - id: message-feedback
       name: '@deepseek-ai/dsh-message-feedback'
@@ -98,6 +108,9 @@
     # shares. The base layer's agent-default-model service owns the default model.
     - id: api-gateway
       name: '@deepseek-ai/dsh-host-apiproxy'
+      config:
+        eventQueueCapacity: 8192
+        sessionListIndexPath: !!js dshHomePath('indexes/session-list.sqlite3')
 
     - id: cordis-host-runner
       name: '@deepseek-ai/dsh-cordis-host-runner'
@@ -161,12 +174,15 @@
         # A deployment adding authorities keeps this expression and concatenates
         # its literals, for example: ['app.internal', ...ctx.webRuntime.trustedHosts].
         trustedHosts: !!js ctx.webRuntime.trustedHosts
+        websocketInboxCapacity: 8192
 
     - id: api-remotes
       name: '@deepseek-ai/dsh-api-remotes'
 
     - id: client-runtime
       name: '@deepseek-ai/dsh-client-runtime'
+      config:
+        maxResidentSessions: 8
 
     - id: cordis-client-runner
       name: '@deepseek-ai/dsh-cordis-client-runner'

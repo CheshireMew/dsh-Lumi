@@ -101,10 +101,27 @@
   color: var(--dsw-alias-label-primary-inverted);
 }
 
+.titleMode button:disabled,
+.modeSwitch button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
 .titleActions {
   align-self: stretch;
   display: flex;
   -webkit-app-region: no-drag;
+}
+
+.titleError {
+  align-self: center;
+  max-width: 220px;
+  padding: 0 8px;
+  overflow: hidden;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .titleActions button {

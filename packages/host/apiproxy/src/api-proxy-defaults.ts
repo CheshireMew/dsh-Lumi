@@ -18,6 +18,8 @@ export interface ApiProxyDefaults extends SessionListingOptions {
   sessionExportCompressionLevel?: SessionLogCompressionLevel
   /** Maximum provider calls made by one session search. */
   sessionSearchProviderCallLimit?: number
+  /** Maximum undelivered frames retained by each Host event stream. */
+  eventQueueCapacity?: number
   /** Report whether native path handoff is available. */
   canOpenPath?: () => boolean
 }

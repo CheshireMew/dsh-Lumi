@@ -34,6 +34,7 @@ import type {
 } from '../contract/session-list.ts'
 import { createScope, scopeOf as scopeTagOf } from '../contract/agent-scope.ts'
 import type { ConversationRuntime } from './conversation-assembler.ts'
+import { DEFAULT_MAX_RESIDENT_SESSIONS } from '../../runtime-config.ts'
 import { SessionManager } from './manager.ts'
 import type { SessionRemotes } from './remotes.ts'
 import { SessionProvideChannel } from './provide.ts'
@@ -168,6 +169,9 @@ export class SessionRuntime implements ISessions {
   private readonly selection: SnapshotStore<SessionSelection>
 
   private readonly scopes = new Map<SessionId, ScopeRecord>()
+  /** Least-recently-materialized order for bounded Session scope residency. */
+  private readonly residentOrder = new Map<SessionId, true>()
+  private residencySweepQueued = false
   /** The provide channel (roster, materialization rules, current projection) — shared with the test runtime's double. */
   private readonly provideChannel: SessionProvideChannel
   /**
@@ -185,13 +189,18 @@ export class SessionRuntime implements ISessions {
    * @param api - wire client shared with every Session.
    * @param remote - generated Remote namespaces shared with every Session.
    * @param conversationRuntime - same-pass registry instances, when runtime apply owns them.
+   * @param maxResidentSessions - maximum materialized scopes retained between visits.
    */
   constructor(
     private readonly rootCtx: Context,
     api: IApiClient,
     remote: SessionRemotes,
     conversationRuntime?: ConversationRuntime,
+    private readonly maxResidentSessions = DEFAULT_MAX_RESIDENT_SESSIONS,
   ) {
+    if (!Number.isSafeInteger(maxResidentSessions) || maxResidentSessions < 1) {
+      throw new RangeError('maxResidentSessions must be a positive safe integer')
+    }
     this.selection = createSnapshotStore<SessionSelection>(
       {},
       { persist: { name: 'dsh.sessions.current' } })
@@ -541,6 +550,8 @@ export class SessionRuntime implements ISessions {
      * validates and the projection masks absent selections), so resolve
      * cannot miss; kept so a future current writer cannot crash the notify. */
     if (record !== undefined) {
+      this.touchResident(current)
+      this.scheduleResidencySweep()
       void record.session.open()
       void this.manager.refreshSubagents(current)
     }
@@ -554,7 +565,11 @@ export class SessionRuntime implements ISessions {
    */
   private resolve(id: SessionId): ScopeRecord | undefined {
     const existing = this.scopes.get(id)
-    if (existing !== undefined) return existing
+    if (existing !== undefined) {
+      this.touchResident(id)
+      this.scheduleResidencySweep()
+      return existing
+    }
     if (!this.eligible(id)) return undefined
     const { fiber, ctx } = createScope(this.rootCtx, id)
     const session = this.manager.get(id)
@@ -571,6 +586,8 @@ export class SessionRuntime implements ISessions {
       provideInfo: this.provideChannel.materializeInfo(binding),
     }
     this.scopes.set(id, record)
+    this.touchResident(id)
+    this.scheduleResidencySweep()
     return record
   }
 
@@ -655,6 +672,7 @@ export class SessionRuntime implements ISessions {
     }
     this.list.set({ ids, byId, current, phase, subagentsByParent, jobsBySession, currentAddress })
     this.pruneScopes()
+    this.scheduleResidencySweep()
   }
 
   /** Tear down scope + instance for no-longer-eligible sessions off stage; the staged one defers until the stage moves. */
@@ -679,6 +697,7 @@ export class SessionRuntime implements ISessions {
    * durable truth, a reopen lazily rebuilds and backfills via open().
    */
   private dropScope(id: SessionId, record: ScopeRecord): void {
+    this.residentOrder.delete(id)
     void record.fiber.dispose()
     // Release the Session's dispatch point with the scope it belongs to (a
     // surviving instance — the live Intent — rebinds when resolve re-mints).
@@ -687,6 +706,42 @@ export class SessionRuntime implements ISessions {
     // declared dependency; a slots-less boot (object-layer tests) skips.
     this.rootCtx.get('slots')?.pruneStoreScope(id)
     this.manager.drop(id)
+  }
+
+  /** Move a materialized scope to the newest end of the residency order. */
+  private touchResident(id: SessionId): void {
+    this.residentOrder.delete(id)
+    this.residentOrder.set(id, true)
+  }
+
+  /** Coalesce pruning so synchronous binding users finish before an off-stage scope can retire. */
+  private scheduleResidencySweep(): void {
+    if (this.residencySweepQueued) return
+    this.residencySweepQueued = true
+    queueMicrotask(() => {
+      this.residencySweepQueued = false
+      this.pruneResidentScopes()
+    })
+  }
+
+  /** Retire least-recent off-stage scopes until the configured resident bound holds. */
+  private pruneResidentScopes(): void {
+    while (this.scopes.size > this.maxResidentSessions) {
+      const current = this.list.getSnapshot().current
+      let candidate: SessionId | undefined
+      for (const id of this.residentOrder.keys()) {
+        if (id === this.watched || id === current) continue
+        candidate = id
+        break
+      }
+      if (candidate === undefined) return
+      const record = this.scopes.get(candidate)
+      this.residentOrder.delete(candidate)
+      if (record === undefined) continue
+      this.scopes.delete(candidate)
+      this.deferredRemovals.delete(candidate)
+      this.dropScope(candidate, record)
+    }
   }
 
   /** Run deferred teardowns whose session is no longer staged (called when the stage moves). */

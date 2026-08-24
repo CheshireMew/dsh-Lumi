@@ -2,7 +2,9 @@
 
 [English](README.md) | 中文
 
-Lumi 的 Electron 桌面宿主。Electron 负责单实例窗口、启用沙箱的 preload bridge、Harness utility process 生命周期、桌面专属目录、有界本机诊断、Windows 签名打包和更新检查。官方 Web 应用仍是产品核心，并通过与 CLI 相同的 profile 启动路径监听本机回环地址和操作系统自动分配的端口。
+Lumi 的 Electron 桌面宿主。Electron 负责单实例无边框窗口、加载与恢复页标题栏、启用沙箱的 preload bridge、Harness utility process 生命周期、桌面专属目录、经过校验的角色包导入、有界本机诊断、Windows 签名打包和更新检查。官方 Web 应用仍是产品核心，并通过与 CLI 相同的 profile 启动路径监听本机回环地址和操作系统自动分配的端口。即使 Web 应用从未挂载，加载页和致命启动失败页仍提供最小化、最大化、关闭、重启、打开日志目录和复制诊断操作。
+
+主进程与 Harness stdout/stderr 诊断使用带 Node 背压的持久异步可写流。轮转只保留一个有界当前文件和一个前序文件，在重命名前先关闭 Windows 文件句柄，并在应用优雅关闭期间排空两条流；因此日志流量不会在 Electron 主线程执行同步文件写入。
 
 `lumi-desktop` profile 只在首次使用时由 `dsh-base`、`dsh-web-app` 和 `@dsh-lumi/bundle-desktop` 初始化。已有 profile patch、主目录 patch、会话、设置、凭据和插件仍由用户拥有，并继续位于普通 `$DSH_HOME` 下。
 
@@ -19,4 +21,4 @@ Lumi 的 Electron 桌面宿主。Electron 负责单实例窗口、启用沙箱�
 
 - 本地只验收当前 Windows 平台。
 - 发布打包要求受保护的 `lumi-desktop-release` GitHub environment 提供 `WIN_CSC_LINK` 与 `WIN_CSC_KEY_PASSWORD`。已安装应用检查更新时，用户必须能够读取仓库公开发布的 Release 资源。
-- preload API 可以通过操作系统打开目录，但应用内没有文件管理器。
+- preload API 可以通过操作系统打开目录，也能通过经过校验的暂存副本和原子重命名安装用户选择的 Character Pack v1 目录，但不提供通用的应用内文件管理器。已有角色包 id 绝不会被覆盖；暂存失败的副本会保留在 `$DSH_HOME/lumi/import-staging` 供诊断。

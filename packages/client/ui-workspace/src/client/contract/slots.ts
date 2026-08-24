@@ -94,8 +94,9 @@ export type WorkspaceBrowserInjected = DirectoryPickingInjected & {
    * Start a New Session in a Workspace: reuse-or-create its blank session and
    * open it; without an explicit workspace, inherit the current Session
    * Workspace, then the recent Workspace, or clear into the New Session view.
+   * @returns true after navigation or a deliberate clear, false after a visible connection failure.
    */
-  startSession: (workspaceId?: WorkspaceId) => void
+  startSession: (workspaceId?: WorkspaceId) => Promise<boolean>
   /** Open a real Session. */
   open: (sessionId: SessionId) => void
   /**
@@ -110,8 +111,8 @@ export type WorkspaceBrowserInjected = DirectoryPickingInjected & {
   searchResultLimit: number
   /** Rename a Session (explicit user title; resolves on host acceptance). */
   renameSession: (sessionId: SessionId, title: string) => Promise<void>
-  /** Fork a Session at its last completed turn and open the child. */
-  forkSession: (sessionId: SessionId) => void
+  /** Fork a Session at its last completed turn and open the child after Host acceptance. */
+  forkSession: (sessionId: SessionId) => Promise<void>
   /** Rename a Host Workspace (rejects on name conflict; resolves on durability). */
   renameWorkspace: (workspaceId: WorkspaceId, title: string) => Promise<void>
   /** Delete only a Host Workspace registration; directory and Session logs remain. */

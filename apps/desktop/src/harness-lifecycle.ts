@@ -16,10 +16,15 @@ export interface HarnessLifecycleEffects {
   onSpawn(process: HarnessProcess): void
   onReady(url: string, port: number): void
   onLog(level: 'info' | 'warn' | 'error', message: string): void
-  onLoading(message: string): void
+  onLoading(state: HarnessLoadingState): void
   onFailure(stage: string, message: string, stack?: string): void
   onExit(code: number): void
 }
+
+/** Renderer-facing startup progress without embedding one presentation language. */
+export type HarnessLoadingState =
+  | { kind: 'restarting' }
+  | { kind: 'retrying'; attempt: number; total: number }
 
 /** Scheduler seam used by lifecycle tests and the Electron main process. */
 export interface HarnessLifecycleScheduler {
@@ -81,7 +86,7 @@ export class HarnessLifecycleController {
     process.onExit((code) => { this.#exited(process, code) })
     this.#startupTimer = this.#scheduler.setTimeout(() => {
       if (process !== this.#process) return
-      this.#fail('startup-timeout', `Harness 在 ${this.#config.startupTimeoutMs}ms 内未就绪。`)
+      this.#fail('startup-timeout', `Harness did not become ready within ${this.#config.startupTimeoutMs}ms.`)
       process.kill()
     }, this.#config.startupTimeoutMs)
   }
@@ -106,7 +111,7 @@ export class HarnessLifecycleController {
     if (this.#restarting || this.#quitting) return
     this.#restarting = true
     this.#clearRetryTimer()
-    this.#effects.onLoading('正在重新启动 Harness…')
+    this.#effects.onLoading({ kind: 'restarting' })
     try {
       await this.stop({ type: 'restart' })
       this.#disconnectRetries = 0
@@ -168,15 +173,18 @@ export class HarnessLifecycleController {
     this.#effects.onExit(code)
     if (this.#quitting || this.#restarting) return
     if (!this.#workerReportedFatal && this.#scheduleRetry(code)) return
-    if (!this.#workerReportedFatal) this.#fail('worker-exit', `Harness 已退出（代码 ${code}）。`)
+    if (!this.#workerReportedFatal) this.#fail('worker-exit', `Harness exited with code ${code}.`)
   }
 
   #scheduleRetry(code: number): boolean {
     if (this.#disconnectRetries >= this.#config.disconnectRetryCount) return false
     this.#disconnectRetries += 1
-    const message = `Harness 连接中断，正在重试（${this.#disconnectRetries}/${this.#config.disconnectRetryCount}）`
     this.#effects.onLog('warn', `Harness disconnected with code ${code}; retry ${this.#disconnectRetries}/${this.#config.disconnectRetryCount}`)
-    this.#effects.onLoading(message)
+    this.#effects.onLoading({
+      kind: 'retrying',
+      attempt: this.#disconnectRetries,
+      total: this.#config.disconnectRetryCount,
+    })
     this.#retryTimer = this.#scheduler.setTimeout(() => {
       this.#retryTimer = undefined
       this.start()

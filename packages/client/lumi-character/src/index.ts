@@ -11,6 +11,7 @@ import {
 } from './settings.ts'
 
 export * from './pack-contract.ts'
+export { inspectLumiPackDirectory, type LumiPackInspection } from './packs.ts'
 export * from './settings.ts'
 
 const SETTINGS_NAMESPACE = settingsNamespace(LUMI_CHARACTER_SETTINGS_NAMESPACE)

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/client/lumi-character/README.md
-README.md: aadfc80465ed37466e573d4896a080e5e4334135
-README.zh.md: 962631e80af092bf581742615c847c39a6e3b4dd
+README.md: c538e124e32d7363d61a7d4f185b08edb2d2b129
+README.zh.md: 75ba40e9c63a4b2f20aa7a685fa78efe618209f9

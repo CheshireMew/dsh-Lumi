@@ -420,16 +420,16 @@ describe('WorkspaceRuntime', () => {
     const unresolved = new Promise<SessionId>(() => {})
     const connect = vi.spyOn(workspaces, 'connectWorkspace').mockReturnValue(unresolved)
 
-    workspaces.startSession(wid('recent-home'))
+    void workspaces.startSession(wid('recent-home'))
     await Promise.resolve()
     expect(connect).toHaveBeenLastCalledWith(wid('recent-home'))
 
-    workspaces.startSession()
+    void workspaces.startSession()
     await Promise.resolve()
     expect(connect).toHaveBeenLastCalledWith(wid('current-home'))
 
     sessions.clear()
-    workspaces.startSession()
+    void workspaces.startSession()
     await Promise.resolve()
     expect(connect).toHaveBeenLastCalledWith(wid('recent-home'))
 
@@ -438,8 +438,34 @@ describe('WorkspaceRuntime', () => {
     const emptySessions = new SessionRuntime(emptyCtx, emptyApi, fakeRemote())
     const emptyWorkspaces = new WorkspaceRuntime(emptyCtx, emptyApi, emptySessions)
     const clear = vi.spyOn(emptySessions, 'clear')
-    emptyWorkspaces.startSession()
+    await expect(emptyWorkspaces.startSession()).resolves.toBe(true)
     expect(clear).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a failed New Session navigation visible until an explicit retry succeeds', async () => {
+    const ctx = new Context()
+    const api = new FakeApiClient()
+    const sessions = new SessionRuntime(ctx, api, fakeRemote())
+    const workspaces = new WorkspaceRuntime(ctx, api, sessions)
+    api.onWorkspaceList = () => Promise.resolve(ok({
+      items: [workspace('alpha')] as never[],
+    }))
+    await workspaces.refresh()
+
+    api.onCreate = () => Promise.resolve(err({
+      code: 'internal', message: 'create refused', details: {},
+    }))
+    await expect(workspaces.startSession(wid('alpha'))).resolves.toBe(false)
+    expect(sessions.list.getSnapshot().current).toBeUndefined()
+    expect(workspaces.list.getSnapshot().navigationFailure).toEqual({
+      workspaceId: 'alpha',
+      message: 'session create failed: internal: create refused',
+    })
+
+    api.onCreate = () => Promise.resolve(ok({ sessionId: sid('fresh') }))
+    await expect(workspaces.startSession(wid('alpha'))).resolves.toBe(true)
+    expect(sessions.list.getSnapshot().current).toBe('fresh')
+    expect(workspaces.list.getSnapshot().navigationFailure).toBeNull()
   })
 
   it('archives a session, projects the set from the response, list, and frame, and clears only the current one', async () => {
@@ -573,7 +599,7 @@ describe('startInitialSelection', () => {
     stopEmpty()
   })
 
-  it('a failed connect returns to waiting and retries on the next list change', async () => {
+  it('keeps a failed initial connect visible and waits for an explicit retry', async () => {
     const b = bench()
     b.api.onWorkspaceList = () => Promise.resolve(ok({
       items: [workspace('recent', [], '2026-01-02T00:00:00.000Z')] as never[],
@@ -585,13 +611,22 @@ describe('startInitialSelection', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(b.api.callsOf('session.create')).toHaveLength(1)
     expect(b.sessions.list.getSnapshot().current).toBeUndefined()
+    expect(b.workspaces.list.getSnapshot().navigationFailure).toEqual({
+      workspaceId: 'recent',
+      message: 'session create failed: internal: attach exploded',
+    })
 
-    // Recovery: the next workspace-list change re-runs the reconcile.
+    // Baseline churn must not hide the failure or start a surprise retry.
     b.api.onCreate = () => Promise.resolve(ok({ sessionId: sid('s-retry') }))
     await b.workspaces.refresh()
     await new Promise(resolve => setTimeout(resolve, 0))
+    expect(b.api.callsOf('session.create')).toHaveLength(1)
+    expect(b.sessions.list.getSnapshot().current).toBeUndefined()
+
+    await expect(b.workspaces.startSession(wid('recent'))).resolves.toBe(true)
     expect(b.api.callsOf('session.create')).toHaveLength(2)
     expect(b.sessions.list.getSnapshot().current).toBe('s-retry')
+    expect(b.workspaces.list.getSnapshot().navigationFailure).toBeNull()
     stop()
   })
 })

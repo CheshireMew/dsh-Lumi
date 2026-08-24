@@ -13,6 +13,7 @@ import { en } from '../src/client/locales.ts'
 afterEach(() => {
   cleanup()
   document.getElementById('root')?.remove()
+  Reflect.deleteProperty(window, 'dshDesktop')
 })
 
 let nextRpc = 0
@@ -66,6 +67,7 @@ function harness(options: {
   providersReject?: boolean
   setFailure?: string
   setReject?: string
+  discoveryFailure?: string
 } = {}) {
   if (document.getElementById('root') === null) {
     const appRoot = document.createElement('div')
@@ -98,6 +100,9 @@ function harness(options: {
             }],
         }))
       },
+      discoverModels: vi.fn(() => options.discoveryFailure === undefined
+        ? Promise.resolve(ok({ models: [{ id: 'deepseek-v4-flash' }] }))
+        : Promise.resolve(fail(options.discoveryFailure))),
     },
     settings: {
       describe: () => Promise.resolve(ok({
@@ -180,7 +185,7 @@ describe('DeepSeekOnboardingDialog', () => {
     expect(appRoot.inert).toBe(true)
   })
 
-  it('requires a non-blank key before Save and continue is available', async () => {
+  it('requires a non-blank key before Verify and save is available', async () => {
     const h = harness()
     render(<DeepSeekOnboardingDialog {...h.props} />)
     await screen.findByRole('dialog')
@@ -190,6 +195,27 @@ describe('DeepSeekOnboardingDialog', () => {
     expect(save.disabled).toBe(true)
     expect(screen.getByText(en.keyRequired)).toBeTruthy()
     expect(h.set).not.toHaveBeenCalled()
+  })
+
+  it('verifies a desktop key before any credential or settings write', async () => {
+    Object.defineProperty(window, 'dshDesktop', { configurable: true, value: {} })
+    const rejected = harness({ discoveryFailure: '401; check the API key' })
+    const rejectedView = render(<DeepSeekOnboardingDialog {...rejected.props} />)
+    await screen.findByRole('dialog')
+    fireEvent.change(screen.getByLabelText(en.keyInput), { target: { value: 'wrong' } })
+    fireEvent.click(screen.getByRole('button', { name: en.onboardingSave }))
+    expect(await screen.findByText('401; check the API key')).toBeTruthy()
+    expect(rejected.set).not.toHaveBeenCalled()
+    expect(rejected.mutate).not.toHaveBeenCalled()
+    rejectedView.unmount()
+
+    const accepted = harness()
+    render(<DeepSeekOnboardingDialog {...accepted.props} />)
+    await screen.findByRole('dialog')
+    fireEvent.change(screen.getByLabelText(en.keyInput), { target: { value: '  sk-live  ' } })
+    fireEvent.click(screen.getByRole('button', { name: en.onboardingSave }))
+    await waitFor(() => { expect(accepted.set).toHaveBeenCalledOnce() })
+    expect(accepted.set).toHaveBeenCalledWith({ ref: 'DEEPSEEK_API_KEY', value: 'sk-live' })
   })
 
   it('keeps the modal open and reports rejected and failed credential writes', async () => {

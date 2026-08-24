@@ -2,6 +2,9 @@
 # plugins: character owns packs/settings/TTS/progression; shell only replaces
 # layout.frame and falls back to the official AppFrame when unloaded.
 - insert:
+    - id: lumi-desktop
+      name: '@dsh-lumi/bundle-desktop'
+
     - id: lumi-character
       name: '@dsh-lumi/client-character'
 

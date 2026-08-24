@@ -19,6 +19,7 @@ import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import {
   PersistenceCoordinator,
+  SessionPersistenceNotFoundError,
   SessionPersistenceRevision,
   type PersistenceBackend,
   type StoredPrefix,
@@ -309,6 +310,7 @@ describe('cold history recovery view', () => {
     const coordinator = new PersistenceCoordinator(ctx, backend)
     ctx.provide('sessionPersistence', {
       list: (signal?: AbortSignal) => backend.list(signal),
+      listSnapshots: async (signal?: AbortSignal) => snapshots(await backend.list(signal)),
       inspect: (id: SessionId, signal?: AbortSignal) => coordinator.inspect(id, signal),
       locate: () => undefined,
     } as never)
@@ -356,6 +358,7 @@ describe('Remote Agent and Session lookup policy', () => {
     const inspect = vi.fn(() => Promise.resolve({ meta, events: [] as SessionEvent[] }))
     ctx.provide('sessionPersistence', {
       list: () => Promise.resolve([meta]),
+      listSnapshots: () => Promise.resolve(snapshots([meta])),
       inspect,
       locate: () => undefined,
     } as never)
@@ -401,6 +404,7 @@ describe('Remote Agent and Session lookup policy', () => {
     const inspect = vi.fn(() => Promise.resolve({ meta: coldMeta, events: [] as SessionEvent[] }))
     ctx.provide('sessionPersistence', {
       list: () => Promise.resolve([coldMeta]),
+      listSnapshots: () => Promise.resolve(snapshots([coldMeta])),
       inspect,
       locate: () => undefined,
     } as never)
@@ -469,7 +473,8 @@ describe('subagent ownership fence', () => {
     ] as SessionEvent[]
     const inspect = vi.fn(() => Promise.resolve({ meta, events }))
     ctx.provide('sessionPersistence', {
-      list: () => Promise.resolve([meta]),
+      list: () => Promise.reject(new Error('exact-id resume must not enumerate the session catalog')),
+      listSnapshots: () => Promise.resolve(snapshots([meta])),
       inspect,
       locate: () => undefined,
     } as never)
@@ -524,6 +529,7 @@ describe('subagent ownership fence', () => {
     ] as SessionEvent[]
     ctx.provide('sessionPersistence', {
       list: () => Promise.resolve([meta]),
+      listSnapshots: () => Promise.resolve(snapshots([meta])),
       inspect: () => Promise.resolve({ meta, events }),
       locate: () => undefined,
     } as never)
@@ -727,14 +733,16 @@ describe('degenerate composition (no persistence, no factory)', () => {
     }
   })
 
-  it('maps a persistence catalog miss to session-not-found without inspection', async () => {
+  it('maps an exact persistence miss to session-not-found without catalog enumeration', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(UserQuestionService)
-    const inspect = vi.fn()
+    const list = vi.fn(() => Promise.reject(new Error('exact-id history must not enumerate the session catalog')))
+    const inspect = vi.fn((id: SessionId) => Promise.reject(new SessionPersistenceNotFoundError(id)))
     ctx.provide('sessionPersistence', {
-      list: () => Promise.resolve([]),
+      list,
+      listSnapshots: () => Promise.resolve([]),
       inspect,
     } as never)
     const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
@@ -742,7 +750,8 @@ describe('degenerate composition (no persistence, no factory)', () => {
     const response = await api.sessions.history(request({ sessionId: sid('session-missing') }))
     expect(response.result.ok).toBe(false)
     if (!response.result.ok) expect(response.result.error.code).toBe('session-not-found')
-    expect(inspect).not.toHaveBeenCalled()
+    expect(inspect).toHaveBeenCalledOnce()
+    expect(list).not.toHaveBeenCalled()
   })
 })
 
@@ -789,6 +798,7 @@ describe('sessions.prompt synchronous rejection', () => {
     const meta: SessionHeader = header('race-resume', 1000)
     ctx.provide('sessionPersistence', {
       list: () => Promise.resolve([meta]),
+      listSnapshots: () => Promise.resolve(snapshots([meta])),
       inspect: () => Promise.resolve({ meta, events: [] as SessionEvent[] }),
       locate: () => undefined,
     } as never)

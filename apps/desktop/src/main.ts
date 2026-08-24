@@ -1,4 +1,6 @@
 import { type Writable } from 'node:stream'
+import { finished } from 'node:stream/promises'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -6,15 +8,16 @@ import {
   type UtilityProcess,
 } from 'electron'
 import updaterPackage from 'electron-updater'
+import { installCharacterPack, type CharacterPackInstallResult } from './character-pack-import.ts'
 import { DESKTOP_RUNTIME_CONFIG } from './config.ts'
 import {
-  HarnessLifecycleController, type HarnessProcess,
+  HarnessLifecycleController, type HarnessLoadingState, type HarnessProcess,
 } from './harness-lifecycle.ts'
 import { DESKTOP_EVENT_CHANNELS, DESKTOP_INVOKE_CHANNELS } from './ipc.ts'
 import {
-  appendBoundedLog, createDesktopLogStream, pruneDesktopDiagnostics,
+  createDesktopLogStream, createMainLogStream, pruneDesktopDiagnostics,
 } from './diagnostics.ts'
-import { dailyLogPath, ensureDesktopPaths, type DesktopPaths } from './paths.ts'
+import { ensureDesktopPaths, type DesktopPaths } from './paths.ts'
 import {
   readWindowPlacement, resolveWindowPlacement, windowPlacementPath, writeWindowPlacement,
 } from './window-state.ts'
@@ -28,6 +31,44 @@ const loadingPage = join(root, 'assets', 'loading.html')
 const preload = join(root, 'lib', 'preload.cjs')
 const workerEntry = join(root, 'lib', 'harness-worker.js')
 
+const desktopCopy = {
+  en: {
+    starting: 'Starting Harness and Lumi…',
+    restarting: 'Restarting Harness…',
+    retrying: (attempt: number, total: number) => `Harness disconnected. Retrying (${attempt}/${total})…`,
+    launchFailed: 'Lumi could not start. Use the recovery actions below or open the logs for details.',
+    rendererExited: (reason: string) => `The interface process exited: ${reason}.`,
+    updateTitle: 'Lumi update ready',
+    updateMessage: (version: string) => `Lumi ${version} was downloaded and its signature was verified.`,
+    updateDetail: 'Restart now to finish updating, or install automatically after you quit Lumi.',
+    updateNow: 'Restart now',
+    updateLater: 'Later',
+    selectPack: 'Select a Character Pack v1 folder',
+  },
+  zh: {
+    starting: '正在启动 Harness 与 Lumi…',
+    restarting: '正在重新启动 Harness…',
+    retrying: (attempt: number, total: number) => `Harness 连接中断，正在重试（${attempt}/${total}）…`,
+    launchFailed: 'Lumi 未能启动。请使用下面的恢复操作，或打开日志查看详情。',
+    rendererExited: (reason: string) => `界面进程已退出：${reason}。`,
+    updateTitle: 'Lumi 更新已就绪',
+    updateMessage: (version: string) => `Lumi ${version} 已下载并通过签名校验。`,
+    updateDetail: '现在重启即可完成更新，也可以在退出 Lumi 后自动安装。',
+    updateNow: '现在重启',
+    updateLater: '稍后',
+    selectPack: '选择 Character Pack v1 文件夹',
+  },
+} as const
+
+function currentDesktopLocale(): keyof typeof desktopCopy {
+  return app.getLocale().toLowerCase().startsWith('zh') ? 'zh' : 'en'
+}
+
+function loadingMessage(state: HarnessLoadingState): string {
+  const copy = desktopCopy[currentDesktopLocale()]
+  return state.kind === 'restarting' ? copy.restarting : copy.retrying(state.attempt, state.total)
+}
+
 interface WindowState {
   maximized: boolean
   fullscreen: boolean
@@ -35,22 +76,14 @@ interface WindowState {
 
 let mainWindow: BrowserWindow | undefined
 let paths: DesktopPaths | undefined
+let mainLog: Writable | undefined
 let harnessLog: Writable | undefined
 let windowSaveTimer: ReturnType<typeof setTimeout> | undefined
 let allowQuit = false
 let lastHarnessUrl: string | undefined
 
 function log(level: 'INFO' | 'WARN' | 'ERROR', message: string): void {
-  if (paths === undefined) return
-  try {
-    appendBoundedLog(
-      dailyLogPath(paths.logs, 'main'),
-      `${new Date().toISOString()} ${level} ${message}\n`,
-      DESKTOP_RUNTIME_CONFIG.diagnostics.maxLogBytes,
-    )
-  } catch (error) {
-    console.error(`Lumi could not write its desktop log: ${String(error)}`)
-  }
+  mainLog?.write(`${new Date().toISOString()} ${level} ${message}\n`)
 }
 
 function stateOf(window: BrowserWindow): WindowState {
@@ -64,7 +97,9 @@ function publishWindowState(window: BrowserWindow): void {
 async function showLaunchPage(mode: 'loading' | 'error', detail = '', diagnostics = ''): Promise<void> {
   if (mainWindow === undefined || mainWindow.isDestroyed()) return
   try {
-    await mainWindow.loadFile(loadingPage, { query: { mode, detail, diagnostics } })
+    await mainWindow.loadFile(loadingPage, {
+      query: { mode, detail, diagnostics, locale: currentDesktopLocale() },
+    })
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes('ERR_ABORTED')) throw error
   }
@@ -73,13 +108,11 @@ async function showLaunchPage(mode: 'loading' | 'error', detail = '', diagnostic
 function failure(stage: string, message: string, stack?: string): void {
   const diagnostics = [`stage: ${stage}`, `message: ${message}`, ...(stack === undefined ? [] : [`stack:\n${stack}`])].join('\n')
   log('ERROR', diagnostics)
-  void showLaunchPage('error', message.split('\n')[0] ?? message, diagnostics)
+  void showLaunchPage('error', desktopCopy[currentDesktopLocale()].launchFailed, diagnostics)
 }
 
 function attachWorkerOutput(child: UtilityProcess): void {
-  if (paths === undefined) return
-  harnessLog = createDesktopLogStream(paths.logs, DESKTOP_RUNTIME_CONFIG.diagnostics.maxLogBytes)
-  harnessLog.on('error', (error) => { log('WARN', `Harness log stream failed: ${error.message}`) })
+  if (harnessLog === undefined) return
   harnessLog.write(`\n${new Date().toISOString()} INFO utility process starting\n`)
   child.stdout?.pipe(harnessLog, { end: false })
   child.stderr?.pipe(harnessLog, { end: false })
@@ -123,15 +156,22 @@ const lifecycle = new HarnessLifecycleController(DESKTOP_RUNTIME_CONFIG, {
   onLog(level, message) {
     log(level === 'error' ? 'ERROR' : level === 'warn' ? 'WARN' : 'INFO', message)
   },
-  onLoading(message) { void showLaunchPage('loading', message) },
+  onLoading(state) { void showLaunchPage('loading', loadingMessage(state)) },
   onFailure: failure,
   onExit(code) {
     harnessLog?.write(`${new Date().toISOString()} INFO utility process exited with code ${code}\n`)
-    harnessLog?.end()
-    harnessLog = undefined
     log(code === 0 ? 'INFO' : 'ERROR', `Harness utility process exited with code ${code}`)
   },
 })
+
+/** Drain both process-wide log streams after their producers have stopped. */
+async function closeDesktopLogs(): Promise<void> {
+  const streams = [harnessLog, mainLog].filter((stream): stream is Writable => stream !== undefined)
+  harnessLog = undefined
+  mainLog = undefined
+  for (const stream of streams) stream.end()
+  await Promise.allSettled(streams.map(stream => finished(stream)))
+}
 
 function ownedWindow(sender: Electron.WebContents): BrowserWindow | undefined {
   const window = BrowserWindow.fromWebContents(sender)
@@ -141,6 +181,20 @@ function ownedWindow(sender: Electron.WebContents): BrowserWindow | undefined {
 async function openFolder(path: string): Promise<void> {
   const error = await shell.openPath(path)
   if (error !== '') throw new Error(error)
+}
+
+async function importCharacterPack(window: BrowserWindow): Promise<CharacterPackInstallResult | { kind: 'cancelled' }> {
+  if (paths === undefined) return { kind: 'error', code: 'copy-failed', detail: 'desktop paths are unavailable' }
+  const desktopPaths = paths
+  const choice = await dialog.showOpenDialog(window, {
+    title: desktopCopy[currentDesktopLocale()].selectPack,
+    properties: ['openDirectory'],
+  })
+  if (choice.canceled || choice.filePaths[0] === undefined) return { kind: 'cancelled' }
+  return installCharacterPack(choice.filePaths[0], desktopPaths, {
+    createStagingId: randomUUID,
+    logFailure: (message) => { log('ERROR', message) },
+  })
 }
 
 function registerIpc(): void {
@@ -164,6 +218,10 @@ function registerIpc(): void {
   })
   ipcMain.handle(DESKTOP_INVOKE_CHANNELS.openPacks, async (event) => {
     if (ownedWindow(event.sender) !== undefined && paths !== undefined) await openFolder(paths.characterPacks)
+  })
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.importPack, async (event) => {
+    const window = ownedWindow(event.sender)
+    return window === undefined ? { kind: 'error', code: 'copy-failed', detail: 'window is unavailable' } : importCharacterPack(window)
   })
 }
 
@@ -224,7 +282,7 @@ function createWindow(): BrowserWindow {
     failure('browser-disconnect', `${description} (${code})`)
   })
   window.webContents.on('render-process-gone', (_event, details) => {
-    failure('renderer-exit', `界面进程已退出：${details.reason}。`)
+    failure('renderer-exit', desktopCopy[currentDesktopLocale()].rendererExited(details.reason))
   })
   window.webContents.on('unresponsive', () => { log('WARN', 'renderer became unresponsive') })
   window.webContents.on('responsive', () => { log('INFO', 'renderer became responsive again') })
@@ -243,6 +301,10 @@ if (!singleInstance) {
 } else {
   paths = ensureDesktopPaths()
   const pruned = pruneDesktopDiagnostics(paths.logs, paths.crashes, DESKTOP_RUNTIME_CONFIG.diagnostics)
+  mainLog = createMainLogStream(paths.logs, DESKTOP_RUNTIME_CONFIG.diagnostics.maxLogBytes)
+  harnessLog = createDesktopLogStream(paths.logs, DESKTOP_RUNTIME_CONFIG.diagnostics.maxLogBytes)
+  mainLog.on('error', (error) => { console.error(`Lumi could not write its desktop log: ${error.message}`) })
+  harnessLog.on('error', (error) => { log('WARN', `Harness log stream failed: ${error.message}`) })
   app.setPath('crashDumps', paths.crashes)
   crashReporter.start({
     productName: 'Lumi',
@@ -270,7 +332,9 @@ if (!singleInstance) {
     if (allowQuit) return
     event.preventDefault()
     allowQuit = true
-    void lifecycle.shutdown().finally(() => { app.quit() })
+    void (async () => {
+      try { await lifecycle.shutdown() } finally { await closeDesktopLogs(); app.quit() }
+    })()
   })
   app.on('window-all-closed', () => { app.quit() })
 
@@ -286,17 +350,18 @@ if (!singleInstance) {
     })
     registerIpc()
     mainWindow = createWindow()
-    await showLaunchPage('loading', '正在启动 Harness…')
+    await showLaunchPage('loading', desktopCopy[currentDesktopLocale()].starting)
     lifecycle.start()
     void startDesktopUpdater(autoUpdater, app.isPackaged, {
       log,
       async confirmInstall(version) {
+        const copy = desktopCopy[currentDesktopLocale()]
         const options: Electron.MessageBoxOptions = {
           type: 'info',
-          title: 'Lumi 更新已就绪',
-          message: `Lumi ${version} 已下载并通过签名校验。`,
-          detail: '现在重启即可完成更新，也可以在退出 Lumi 后自动安装。',
-          buttons: ['现在重启', '稍后'],
+          title: copy.updateTitle,
+          message: copy.updateMessage(version),
+          detail: copy.updateDetail,
+          buttons: [copy.updateNow, copy.updateLater],
           defaultId: 0,
           cancelId: 1,
           noLink: true,

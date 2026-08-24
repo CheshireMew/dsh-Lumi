@@ -6,7 +6,7 @@ import {
   creditLumiPositiveFeedback, creditLumiTurns, localDateKey, migrateLegacyLumiBond,
   type LumiBondRecord,
 } from '../bond.ts'
-import type { LumiPackView, CharacterState } from '../pack-contract.ts'
+import type { LumiPackDiagnostic, LumiPackView, CharacterState } from '../pack-contract.ts'
 import {
   BUILTIN_PACK_ID, DEFAULT_UI_LUMI_SETTINGS, UI_LUMI_SETTINGS_NAMESPACE,
   type LumiLayoutMode, type LumiMotionPreference, type UiLumiSettings,
@@ -25,7 +25,14 @@ export interface CharacterConversationObservation {
 /** Immutable browser view used by the shell, settings row, and voice actions. */
 export interface LumiCharacterSnapshot {
   settingsStatus: 'loading' | 'ready' | 'unavailable'
+  settingsWritable: boolean
+  preferenceStatus: 'idle' | 'saving' | 'error'
+  preferenceFailure: { kind: 'unavailable' | 'persistence'; field: LumiPreferenceField } | undefined
   settings: UiLumiSettings
+  packStatus: 'loading' | 'ready' | 'error'
+  packError: string | undefined
+  packFallback: boolean
+  packDiagnostics: readonly LumiPackDiagnostic[]
   packs: readonly LumiPackView[]
   activePack: LumiPackView
   voices: readonly string[]
@@ -35,7 +42,6 @@ export interface LumiCharacterSnapshot {
   speechMessageId: string | undefined
   mouthOpen: boolean
   animationsPaused: boolean
-  notice: string | undefined
   bondLevel: number
   bondLevelProgress: number
   unlockedExpressions: readonly string[]
@@ -58,11 +64,19 @@ export class LumiCharacterRuntime implements HostObservable<LumiCharacterSnapsho
   private readonly listeners = new Set<() => void>()
   private settings = DEFAULT_UI_LUMI_SETTINGS
   private settingsStatus: LumiCharacterSnapshot['settingsStatus'] = 'loading'
+  private settingsWritable = false
+  private preferenceStatus: LumiCharacterSnapshot['preferenceStatus'] = 'idle'
+  private preferenceFailure: LumiCharacterSnapshot['preferenceFailure']
+  private failedPreference: { field: LumiPreferenceField; value: unknown } | undefined
+  private preferenceGeneration = 0
   private packs: readonly LumiPackView[] = [BUILTIN_PACK]
+  private packStatus: LumiCharacterSnapshot['packStatus'] = 'loading'
+  private packError: string | undefined
+  private packFallback = false
+  private packDiagnostics: readonly LumiPackDiagnostic[] = []
   private baseState: CharacterConversationObservation['baseState'] = 'idle'
   private success = false
   private hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
-  private notice: string | undefined
   private revision = 0
   private snapshot: LumiCharacterSnapshot
   private activeSessionId: string | undefined
@@ -206,32 +220,58 @@ export class LumiCharacterRuntime implements HostObservable<LumiCharacterSnapsho
         break
     }
     if (!accepted) return
+    if (this.settingsStatus !== 'ready' || !this.settingsWritable) {
+      this.preferenceStatus = 'error'
+      this.preferenceFailure = { kind: 'unavailable', field }
+      this.failedPreference = { field, value }
+      this.publish()
+      return
+    }
     this.settings = { ...this.settings, [field]: value }
     if (field === 'ttsEnabled' && value === false) this.speechPlayer.cancel(false)
+    this.preferenceStatus = 'saving'
+    this.preferenceFailure = undefined
+    this.failedPreference = undefined
     this.publish()
-    void this.settingsScope.set(field, value)
+    const generation = ++this.preferenceGeneration
+    void this.settingsScope.set(field, value).then(
+      () => { this.settlePreference(generation, field, value) },
+      () => { this.settlePreference(generation, field, value) },
+    )
+  }
+
+  /** Retry the last preference write rejected by the settings transport. */
+  retryPreference(): void {
+    const failed = this.failedPreference
+    if (failed !== undefined) this.setPreference(failed.field, failed.value)
   }
 
   /** Re-read local character packs and surface fallback diagnostics non-blockingly. */
   async refreshPacks(): Promise<void> {
+    this.packStatus = 'loading'
+    this.packError = undefined
+    this.publish()
     try {
       const response = await fetch('/lumi/packs', { cache: 'no-store' })
-      if (!response.ok) return
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const data: unknown = await response.json()
-      if (!isLumiPackCatalogView(data) || data.packs.length === 0) return
+      if (!isLumiPackCatalogView(data) || data.packs.length === 0) throw new Error('invalid character-pack catalog response')
       this.packs = Object.freeze([...data.packs])
       const selectedMissing = !this.packs.some(pack => pack.manifest.id === this.settings.selectedPack)
       if (selectedMissing) {
         this.settings = { ...this.settings, selectedPack: BUILTIN_PACK_ID }
-        void this.settingsScope.set('selectedPack', BUILTIN_PACK_ID)
+        if (this.settingsStatus === 'ready' && this.settingsWritable) {
+          void this.settingsScope.set('selectedPack', BUILTIN_PACK_ID)
+        }
       }
-      const firstDiagnostic = data.diagnostics[0]
-      this.notice = selectedMissing
-        ? '所选角色包缺失或损坏，已回退到内置角色。'
-        : firstDiagnostic === undefined ? undefined : `${firstDiagnostic.directory}: ${firstDiagnostic.message}`
+      this.packStatus = 'ready'
+      this.packFallback = selectedMissing
+      this.packDiagnostics = Object.freeze([...data.diagnostics])
       this.publish()
-    } catch {
-      // The built-in pack remains usable while Host startup or reconnect settles.
+    } catch (error) {
+      this.packStatus = 'error'
+      this.packError = error instanceof Error ? error.message : String(error)
+      this.publish()
     }
   }
 
@@ -256,6 +296,7 @@ export class LumiCharacterRuntime implements HostObservable<LumiCharacterSnapsho
   private acceptSettings(): void {
     const snapshot = this.settingsScope.getSnapshot()
     this.settingsStatus = snapshot.status
+    this.settingsWritable = snapshot.writable
     if (snapshot.value !== undefined) {
       this.settings = snapshot.value
       const migrated = migrateLegacyLumiBond(snapshot.user)
@@ -263,6 +304,28 @@ export class LumiCharacterRuntime implements HostObservable<LumiCharacterSnapsho
         this.settings = { ...this.settings, bond: migrated }
         this.startLegacyBondMigration(migrated)
       }
+    }
+    this.publish()
+  }
+
+  private settlePreference(generation: number, field: LumiPreferenceField, value: unknown): void {
+    if (generation !== this.preferenceGeneration || this.disposed) return
+    const snapshot = this.settingsScope.getSnapshot()
+    this.settingsStatus = snapshot.status
+    this.settingsWritable = snapshot.writable
+    const user = snapshot.user
+    const persisted = typeof user === 'object' && user !== null && !Array.isArray(user)
+      && Object.prototype.hasOwnProperty.call(user, field)
+      && JSON.stringify((user as Record<string, unknown>)[field]) === JSON.stringify(value)
+    if (persisted) {
+      this.preferenceStatus = 'idle'
+      this.preferenceFailure = undefined
+      this.failedPreference = undefined
+    } else {
+      if (snapshot.value !== undefined) this.settings = snapshot.value
+      this.preferenceStatus = 'error'
+      this.preferenceFailure = { kind: 'persistence', field }
+      this.failedPreference = { field, value }
     }
     this.publish()
   }
@@ -357,7 +420,14 @@ export class LumiCharacterRuntime implements HostObservable<LumiCharacterSnapsho
     const unlocks = activePack.manifest.bondUnlocks.filter(unlock => unlock.level <= level)
     return Object.freeze({
       settingsStatus: this.settingsStatus,
+      settingsWritable: this.settingsWritable,
+      preferenceStatus: this.preferenceStatus,
+      preferenceFailure: this.preferenceFailure,
       settings: this.settings,
+      packStatus: this.packStatus,
+      packError: this.packError,
+      packFallback: this.packFallback,
+      packDiagnostics: this.packDiagnostics,
       packs: this.packs,
       activePack,
       voices: speech.voices,
@@ -367,7 +437,6 @@ export class LumiCharacterRuntime implements HostObservable<LumiCharacterSnapsho
       speechMessageId: speech.messageId,
       mouthOpen: speech.mouthOpen,
       animationsPaused: this.hidden,
-      notice: this.notice,
       bondLevel: level,
       bondLevelProgress: (this.settings.bond.points % LUMI_BOND_POINTS_PER_LEVEL) / LUMI_BOND_POINTS_PER_LEVEL,
       unlockedExpressions: Object.freeze([...new Set(unlocks.flatMap(unlock => unlock.expressions))]),

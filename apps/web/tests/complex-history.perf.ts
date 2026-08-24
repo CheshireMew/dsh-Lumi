@@ -35,6 +35,7 @@ import {
 import { connectFreshWorkspace, newEnglishPage } from './support.ts'
 
 const SIDEBAR_SESSION_COUNT = 1_000
+const MAX_MOUNTED_SIDEBAR_ROWS = 80
 const LONG_SESSION_ID = 'perf-long-history'
 const LONG_SESSION_TITLE = 'LONG_PERF_SENTINEL 500-turn session'
 const LONG_HISTORY_TURNS = 500
@@ -1265,10 +1266,13 @@ describe('manual web performance: complex workspace and history', () => {
         await page.getByRole('button', { name: /^Show \d+ more sessions$/ }).click()
         return stableCount(
           page.getByRole('treeitem'),
-          count => count === SIDEBAR_SESSION_COUNT + 2,
+          count => count > 0 && count <= MAX_MOUNTED_SIDEBAR_ROWS,
         )
       })
-      expect(sidebar.value).toBe(SIDEBAR_SESSION_COUNT + 2)
+      expect(sidebar.value).toBeLessThanOrEqual(MAX_MOUNTED_SIDEBAR_ROWS)
+      await expect.poll(
+        () => page.locator(`[data-logical-tree-rows="${SIDEBAR_SESSION_COUNT + 2}"]`).count(),
+      ).toBe(1)
       await group.click()
       await expect.poll(() => page.getByRole('treeitem').count()).toBe(1)
 
